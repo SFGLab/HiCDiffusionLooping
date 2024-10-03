@@ -1,0 +1,3 @@
+[submodule "submodule/HiCDiffusion"]
+	path = submodule/HiCDiffusion
+	url = https://github.com/SFGLab/HiCDiffusion.git
