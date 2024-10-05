@@ -8,8 +8,7 @@ if __name__ == '__main__':
     artifact = wandb.Artifact(
         name="GRCh38-reference-genome",
         type="dataset",
-        description=
-        "GRCh38_full_analysis_set_plus_decoy_hla.fa from 1000genomes"
+        description="GRCh38_full_analysis_set_plus_decoy_hla.fa from 1000genomes"
     )
 
     artifact.add_reference(
@@ -31,6 +30,18 @@ if __name__ == '__main__':
             metadata=x,
         )
         artifact_4dn.add_reference(x["Open Data URL"])
+        print(run.log_artifact(artifact_4dn))
+
+    
+    small_files = pd.read_csv('data/4DN_small_files.tsv', sep='\t')
+    for x in small_files.to_dict('records'):
+        artifact_4dn = wandb.Artifact(
+            name=x['id'],
+            type="dataset",
+            description=x['desc'],
+            metadata=x,
+        )
+        artifact_4dn.add_reference(x["url"])
         print(run.log_artifact(artifact_4dn))
 
     run.finish()
