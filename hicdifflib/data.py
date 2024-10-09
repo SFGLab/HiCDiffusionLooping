@@ -5,7 +5,6 @@ from typing import Any
 from pathlib import Path
 from dataclasses import dataclass, field
 import subprocess
-from subprocess import Popen, PIPE
 
 from fire import Fire
 from dataclasses_json import dataclass_json
@@ -16,23 +15,7 @@ import wandb
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    # handlers=[
-    #     logging.StreamHandler(),
-    # ]
 )
-
-# logger = logging.getLogger(__name__)
-
-
-class WandbLoggingHandler(logging.Handler):
-    def __init__(self, run: Run, level=0) -> None:
-        super().__init__(level)
-        self._run = run
-
-    def emit(self, record):
-        message = self.format(record)
-        # self._run.log({'log_message': message})
-
 
 
 @dataclass_json
@@ -96,34 +79,6 @@ class WandbArtifact(Artifact):
         return self._artifact.file(self._root_dir)
 
 
-class SubprocessExecutor:
-    def __init__(self, *cmd) -> None:
-        self._cmd = cmd
-
-    @staticmethod
-    def _decode(s):
-        return s.decode(errors='ignore') if isinstance(s, bytes) else s
-
-    def run(self, *cmd, output: FileIO = PIPE, log_output: bool = False) -> str | None:
-        cmd_ = [str(x) for x in self._cmd + cmd]
-        logger.info(' '.join(cmd_) + (f' -> ({output.name!r},{output.mode!r})' if output is not PIPE else ''))
-
-        process = Popen(cmd_, stdout=output, stderr=PIPE, text=True, bufsize=1)
-        with process.stderr:
-            for line in iter(process.stderr.readline, ''):
-                logger.info(line.strip())
-            
-        out = None
-        if output is PIPE:
-            with process.stdout:
-                out = process.stdout.read()
-        process.wait()
-        if log_output:
-            logger.info(out)
-        if output is PIPE:
-            return out
-
-
 def _wandb_run(**wandb_kwargs):
 
     def decorate_run(method: callable) -> callable:
@@ -132,11 +87,8 @@ def _wandb_run(**wandb_kwargs):
             if not self.wandb:
                 return method(self, None, *args, **kwargs)
             run = wandb.init(project=self.wandb_project, name=method.__name__, **wandb_kwargs)
-            # handler = WandbLoggingHandler(run)
-            # logger.addHandler(handler)
             run.log(self.to_dict())
             result = method(self, run, *args, **kwargs)
-            # logger.removeHandler(handler)
             run.finish()
             return result
         
@@ -155,7 +107,6 @@ def _simple_exec_and_log(cmd_builder: callable) -> callable:
         
         args = [str(v) if isinstance(v, (Artifact, Path)) else v for v in args]
         kwargs = {k: (str(v) if isinstance(v, (Artifact, Path)) else v) for k, v in kwargs.items()}
-        # print(args, kwargs)
         cmd = cmd_builder(self, *args, **kwargs)
 
         if output_check and output_check.exists() and not self.skip_intermediary:
@@ -183,26 +134,31 @@ def _log_result(logger, result):
     if result.returncode:
         logger.error('Exited with %d statuscode', result.returncode)
         raise OSError(result.returncode)
-    logger.info('Done', result.returncode)
+    logger.info('Done')
 
 class DataPipeline(DataConfig):
 
-    # def test_output(self):
-    #     self._samtools.run('--help', log_output=True)
-    #     with open('data/out.txt', 'w') as f:
-    #         self._samtools.run('--help', output=f)
-
-
-    # @_wandb_run(job_type=JobType.DATA_GENERATION)
-    # def vcf_consensus(self, run: Run | None, alignments: str, reference: str = 'GRCh38-reference-genome:v0'):
-    #     reference = self._get_artifact(reference, run)
-    #     alignments: Artifact = self._get_artifact(alignments, run)
-
-
-        # self._tools.run('tabix', '-p', 'vcf', delly_vcfgz, log_output=True)
-
-# ./samtools.sif faidx $REF $chroms | ./tools.sif vcf-consensus "$name/delly.vcf.gz" > "$name/delly.fa"
-        
+    @_wandb_run(job_type=JobType.DATA_GENERATION)
+    def vcf_consensus(self, run: Run | None, variants: str, reference: str = 'GRCh38-reference-genome:v0'):
+        reference = self._get_artifact(reference, run)
+        variants = self._get_artifact(variants, run)
+        self.tabix(variants)
+        consensus = variants.path.with_suffix('.fa')
+        self._exec_vcf_consesus(reference, self.chroms, variants, consensus, output_check=consensus)
+        self._log_artifact(run, consensus)
+    
+    @_simple_exec_and_log
+    def _exec_vcf_consesus(self, fasta: str, regions: list[str], vcf: str, output: str):
+        regions = ' '.join([repr(r) for r in regions])
+        return f'{self.samtools_exec} faidx {fasta!r} {regions} | {self.tools_exec} vcf-consensus {vcf!r} > {output!r}'
+    
+    def tabix(self, variants: str | Artifact):
+        variants = self._get_artifact(variants)
+        self._exec_tabix(variants, output_check=variants.path.with_suffix('.gz.tbi'))
+    
+    @_simple_exec_and_log
+    def _exec_tabix(self, vcfgz: str):
+        return f'{self.tools_exec} tabix -fp vcf {vcfgz!r}'
 
     @_wandb_run(job_type=JobType.DATA_GENERATION)
     def delly_call(self, run: Run | None, alignments: str, reference: str = 'GRCh38-reference-genome:v0'):
@@ -258,10 +214,6 @@ class DataPipeline(DataConfig):
     def _exec_samtools_sort(self, input: str, output: str):
         return f'{self.samtools_exec} sort -o {output!r} {input!r}'
 
-    @_simple_exec_and_log
-    def _exec_vcf_consesus(self, ref: str, regions: list[str], vcf: str, output: str):
-        regions = ' '.join([repr(r) for r in regions])
-        return f'{self.samtools_exec} faidx {ref!r} {regions} | {self.tools_exec} vcf-consensus {vcf!r} > {output!r}'
 
     def _log_artifact(self, run: Run, path: Path):
         if self.wandb:
