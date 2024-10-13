@@ -1,4 +1,3 @@
 -r submodule/HiCDiffusion/requirements.txt
 fire
 dataclasses-json
-pymemesuite

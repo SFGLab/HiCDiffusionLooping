@@ -54,6 +54,10 @@ class Artifact:
     @property
     def path(self) -> Path:
         return Path(str(self))
+    
+    @property
+    def path_no_suffix(self) -> Path:
+        return self.path.with_suffix('')
 
 
 class LocalArtifact(Artifact):
@@ -136,7 +140,27 @@ def _log_result(logger, result):
         raise OSError(result.returncode)
     logger.info('Done')
 
+
 class DataPipeline(DataConfig):
+    @_wandb_run(job_type=JobType.DATA_GENERATION)
+    def fimo(self, run: Run | None, motif: str = 'MA0139.2.meme:v0', sequence: str = 'GRCh38-reference-genome:v0'):
+        motif: Artifact = self._get_artifact(motif, run)
+        sequence: Artifact = self._get_artifact(sequence, run)
+        filename = 'fimo_' + motif.path_no_suffix.name + '_' + sequence.path_no_suffix.name + '.tsv.gz'
+        output = Path(self.data_root) / filename
+        self._exec_fimo(sequence, self.chroms, motif, output)
+        self._log_artifact(run, output)
+
+    @_simple_exec_and_log
+    def _exec_fimo(self, fasta: str, regions: list[str], motif: str, ouput_gz: str):
+        regions = ' '.join([repr(r) for r in regions])
+        return (
+            f'{self.samtools_exec} faidx {fasta!r} {regions} | '
+            f'{self.tools_exec} fimo --verbosity 2 --text {motif!r} - | '
+            f'{self.tools_exec} gzip > {ouput_gz!r}'
+        )
+        # ./samtools.sif faidx data/GRCh38_full_analysis_set_plus_decoy_hla.fa chr1 | ./tools.sif fimo --verbosity 1 --text data/MA0139.2.meme - | gzip > data/fimo_results.txt.gz
+    
 
     @_wandb_run(job_type=JobType.DATA_GENERATION)
     def vcf_consensus(self, run: Run | None, variants: str, reference: str = 'GRCh38-reference-genome:v0'):
