@@ -1,0 +1,118 @@
+from os import PathLike
+from pathlib import Path
+
+import pandas as pd
+
+
+def to_ranges_df(df, suffix = '', extra_columns: list | None = None):
+    dct = {
+        'Chromosome': df[f'chr{suffix}'],
+        'Start': df[f'start{suffix}'],
+        'End': df[f'end{suffix}'],
+        'ID': df.index
+    }
+    if suffix:
+        dct['Suffix'] = suffix
+    for column in (extra_columns or []):
+        dct[column] = df[column]
+    return pd.DataFrame(dct)
+
+
+def read_paired_ends(
+    path: PathLike,
+    compression: str | None = None,
+    header: bool = None,
+    sep: str = '\t',
+    filter_query: str = None,
+    extra_columns: list[str] | None = None,
+) -> pd.DataFrame:
+    path = Path(path)
+    read_args = {
+        'compression': compression or {
+            '.gz': 'gzip'
+        }.get(path.suffix),
+        'sep': sep,
+    }
+    if not header:
+        read_args['header'] = None
+    pairs = pd.read_csv(path, **read_args)
+
+    pairs.columns = [
+        'chr_l', 'start_l', 'end_l', 'chr_r', 'start_r', 'end_r',
+        *(extra_columns or [])
+    ]
+    pairs['len_l'] = (pairs.end_l - pairs.start_l).map(bp)
+    pairs['len_r'] = (pairs.end_r - pairs.start_r).map(bp)
+    pairs['len_full'] = (pairs.end_r - pairs.start_l).map(bp)
+
+    if filter_query:
+        pairs = pairs.query(filter_query).reset_index(drop=True)
+    return pairs
+
+
+def _reduce_to_unit(num):
+    for unit in ("", "k", "M"):
+        if abs(num) < 1000:
+            return num, unit
+        num /= 1000
+    return num, 'G'
+
+
+def basepairs_fmt(num):
+    suffix = "bp"
+    num, unit = _reduce_to_unit(num)
+    if num.is_integer():
+        return f"{int(num)}{unit}{suffix}"
+    return f"{num:.1f}{unit}{suffix}"
+
+class bp:
+    def __init__(self, bp, unit=''):
+        if isinstance(bp, str):
+            suffix = bp[-3:]
+            unit = suffix[0]
+            if not suffix[1:] == 'bp':
+                raise ValueError
+            bp = bp[:-3]
+
+        self._bp = float(bp)
+        if unit:
+            self._bp *= {'k': 1000, 'M': 1_000_000, 'G': 1_000_000_000}[unit]
+
+    def __str__(self):
+        return basepairs_fmt(self._bp)
+
+    def __int__(self):
+        return int(self._bp)
+
+    def __float__(self):
+        return float(self._bp)
+
+    def __repr__(self):
+        return str(self)
+
+    def __lt__(self, other):
+        return int(self) < int(other)
+
+    def __le__(self, other):
+        return int(self) <= int(other)
+
+    def __gt__(self, other):
+        return int(self) > int(other)
+
+    def __ge__(self, other):
+        return int(self) >= int(other)
+
+    def __eq__(self, other):
+        return int(self) == int(other)
+
+    def __ne__(self, other):
+        return int(self) != int(other)
+
+
+def bint(*args, **kwargs):
+    return int(bp(*args, **kwargs))
+
+
+def bstr(*args, **kwargs):
+    return str(bp(*args, **kwargs))
+

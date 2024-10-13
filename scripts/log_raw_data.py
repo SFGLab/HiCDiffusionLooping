@@ -44,4 +44,17 @@ if __name__ == '__main__':
         artifact_4dn.add_reference(x["url"])
         print(run.log_artifact(artifact_4dn))
 
+    for motif_url, desc in [
+        ('https://jaspar.elixir.no/api/v1/matrix/MA1929.2.meme', 'TF has several motif variants. Extended motif with zinc finger 8 (5bp)'),
+        ('https://jaspar.elixir.no/api/v1/matrix/MA1930.2.meme', 'TF has several motif variants. Extended motif with zinc finger 8 (6bp)'),
+        ('https://jaspar.elixir.no/api/v1/matrix/MA0139.2.meme', 'TF has several motif variants.'),
+    ]:
+        artifact_motif = wandb.Artifact(
+            name=motif_url.split('/')[-1],
+            type="dataset",
+            description=desc
+        )
+        artifact_motif.add_reference(motif_url)
+        print(run.log_artifact(artifact_motif))
+
     run.finish()
