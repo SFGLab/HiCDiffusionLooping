@@ -56,5 +56,15 @@ if __name__ == '__main__':
         )
         artifact_motif.add_reference(motif_url)
         print(run.log_artifact(artifact_motif))
+    
+    artifact_hicdiffusion = wandb.Artifact(
+        name='hicdiffusion_encoder_decoder',
+        type='model',
+    )
+    artifact_hicdiffusion.add_reference(
+        uri='https://zenodo.org/records/13840733/files/hicdiffusion_encoder_decoder.ckpt?download=1', 
+        name='hicdiffusion_encoder_decoder.ckpt'
+    )
+    print(run.log_artifact(artifact_hicdiffusion))
 
     run.finish()
