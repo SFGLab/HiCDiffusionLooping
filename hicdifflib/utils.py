@@ -4,20 +4,6 @@ from pathlib import Path
 import pandas as pd
 
 
-def to_ranges_df(df, suffix = '', extra_columns: list | None = None):
-    dct = {
-        'Chromosome': df[f'chr{suffix}'],
-        'Start': df[f'start{suffix}'],
-        'End': df[f'end{suffix}'],
-        'ID': df.index
-    }
-    if suffix:
-        dct['Suffix'] = suffix
-    for column in (extra_columns or []):
-        dct[column] = df[column]
-    return pd.DataFrame(dct)
-
-
 def read_paired_ends(
     path: PathLike,
     compression: str | None = None,

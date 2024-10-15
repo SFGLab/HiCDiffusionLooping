@@ -1,15 +1,20 @@
 import logging
-from io import FileIO
 from os import PathLike
 from typing import Any
 from pathlib import Path
 from dataclasses import dataclass, field
+import warnings
 import subprocess
 
 from fire import Fire
 from dataclasses_json import dataclass_json
-from wandb.sdk.wandb_run import Run
+from pyranges import PyRanges
+import pandas as pd
 import wandb
+from wandb.sdk.wandb_run import Run
+
+from hicdifflib.utils import read_paired_ends
+from hicdifflib.hicdiffusion import HICDIFFUSION_WINDOW_BP
 
 
 logging.basicConfig(
@@ -34,11 +39,7 @@ class DataConfig:
     delly_exec: str = 'singularity exec delly.sif delly'
     tools_exec: str = 'singularity exec tools.sif'
 
-
     def __post_init__(self):
-        # self._samtools = SubprocessExecutor(*self.samtools_exec)
-        # self._delly = SubprocessExecutor(*self.delly_exec)
-        # self._tools = SubprocessExecutor(*self.tools_exec)
         self._api = wandb.Api(overrides={'project': self.wandb_project})
 
 
@@ -124,28 +125,252 @@ def _simple_exec_and_log(cmd_builder: callable) -> callable:
     return decorated_method
 
 
+def _log_text(logg_fn, text):
+    for line in text.split('\n'):
+        line = line.strip()
+        if line:
+            logg_fn(line)
+
+
 def _log_result(logger, result):
     if result.stdout:
-        for line in result.stdout.split('\n'):
-            line = line.strip()
-            if line:
-                logger.info()
+        _log_text(logger.info, result.stdout)
     if result.stderr:
-        for line in result.stderr.split('\n'):
-            line = line.strip()
-            if line:
-                logger.warning(line.strip())
+        _log_text(logger.warning, result.stderr)
     if result.returncode:
         logger.error('Exited with %d statuscode', result.returncode)
         raise OSError(result.returncode)
     logger.info('Done')
 
 
+_to_pyrange_columns = {'chr': 'Chromosome', 'start': 'Start', 'end': 'End', 'strand': 'Strand'}
+
+
 class DataPipeline(DataConfig):
     @_wandb_run(job_type=JobType.DATA_GENERATION)
+    def pet_pairs(
+        self, 
+        run: Run | None, 
+        pairs: str, 
+        peaks: str, 
+        motifs: list[str],
+        peak_strand_slack: int = 0, 
+        min_strand_ratio: float = 0.5,
+        anchor_peak_slack: int = 0,
+        anchor_peak_min_overlap: int = 500,
+    ):
+        if self.wandb:
+            run.log({
+                'peak_strand_slack': peak_strand_slack,
+                'min_strand_ratio': min_strand_ratio,
+                'anchor_peak_slack': anchor_peak_slack,
+                'anchor_peak_min_overlap': anchor_peak_min_overlap,
+            })
+
+        pairs = self._get_artifact(pairs, run)
+        peaks = self._get_artifact(peaks, run)
+        motifs = [self._get_artifact(motif, run) for motif in motifs]
+
+        pairs_df = (
+            read_paired_ends(pairs.path, extra_columns=['pet_counts'])
+            .query('len_full <= @HICDIFFUSION_WINDOW_BP')
+            .reset_index()
+            .rename(columns={'index': 'pair_index'})
+        )
+
+        peaks_df = pd.read_csv(
+            peaks.path, 
+            sep='\t', 
+            names=['chr', 'start', 'end', 'c1', 'c2', 'c3', 'value', 'c4', 'c5']
+        )
+        peaks_df = peaks_df[['chr', 'start', 'end', 'value']].reset_index()
+
+
+        motifs_df = pd.concat([
+            pd.read_csv(motif.path, sep='\t', compression='gzip')
+            for motif in motifs
+        ])
+        motifs_df = motifs_df[motifs_df.sequence_name.isin(self.chroms)]
+        motifs_df = (
+            motifs_df
+            .reset_index(drop=True)
+            .rename(columns={'sequence_name': 'chr', 'stop': 'end'})
+        )
+        motifs_df['matched_len'] = motifs_df['matched_sequence'].map(len)
+        motifs_df = motifs_df[['chr', 'start', 'end', 'strand', 'matched_len', 'score']]
+        
+        with warnings.catch_warnings():
+            warnings.simplefilter(action='ignore', category=FutureWarning)
+            df = self._pet_pairs(
+                pairs_df=pairs_df,
+                peaks_df=peaks_df,
+                motifs_df=motifs_df,
+                peak_strand_slack=peak_strand_slack,
+                min_strand_ratio=min_strand_ratio,
+                anchor_peak_min_overlap=anchor_peak_min_overlap,
+                anchor_peak_slack=anchor_peak_slack,
+            )
+        
+        path = Path(self.data_root) / 'pet_pairs.csv'
+        df.to_csv(path, index=False)
+        self._log_artifact(run, path)
+
+
+    def _pet_pairs(
+        self, 
+        pairs_df: pd.DataFrame, 
+        peaks_df: pd.DataFrame, 
+        motifs_df: pd.DataFrame, 
+        peak_strand_slack: int, 
+        min_strand_ratio: float,
+        anchor_peak_slack: int,
+        anchor_peak_min_overlap: int,
+    ):
+        logger = logging.getLogger('pet_pairs')
+
+        anchors_l_df = pairs_df.rename(
+            columns={'chr_l': 'chr', 'start_l': 'start', 'end_l': 'end'}
+        )
+        anchors_l_df['strand'] = '+'
+        anchors_r_df = pairs_df.rename(
+            columns={'chr_r': 'chr', 'start_r': 'start', 'end_r': 'end'}
+        )
+        anchors_r_df['strand'] = '-'
+        anchors_df = pd.concat([
+            anchors_l_df[['pair_index', 'chr', 'start', 'end', 'strand']], 
+            anchors_r_df[['pair_index', 'chr', 'start', 'end', 'strand']]
+        ])
+        anchors_df = anchors_df.set_index(['pair_index', 'strand'], drop=False)
+        anchors_pr = PyRanges(anchors_df.rename(columns=_to_pyrange_columns))
+        logger.info('Pairs anchors:')
+        _log_text(logger.info, repr(anchors_pr))
+
+        peaks_pr = PyRanges(
+            peaks_df.rename(
+                columns=dict(index='peak_index', value='peak_value', **_to_pyrange_columns)
+            )
+        )
+        logger.info('Peaks:')
+        _log_text(logger.info, repr(peaks_pr))
+
+        motifs_pr = PyRanges(motifs_df.rename(columns=dict(score='motif_score', **_to_pyrange_columns)))
+        logger.info('Motifs:')
+        _log_text(logger.info, repr(motifs_pr))
+
+        peaks_stranded_pr = peaks_pr.join(
+            other=motifs_pr, 
+            suffix='_motif', 
+            report_overlap=True, 
+            slack=peak_strand_slack, 
+            apply_strand_suffix=False
+        )
+        peaks_stranded_pr = peaks_stranded_pr[peaks_stranded_pr.Overlap == peaks_stranded_pr.matched_len-1]
+        logger.info('Peaks stranded:')
+        _log_text(logger.info, repr(peaks_stranded_pr))
+
+        # calculate confidence of peaks' strand
+        df = peaks_stranded_pr.as_df()
+        df['left_strand'] = (df['Strand'] == '+').astype(int)
+        df['right_strand'] = (df['Strand'] == '-').astype(int)
+        dfgb = df.groupby('peak_index').agg(
+            count=('Strand', 'count'),
+            **{
+                '+': ('left_strand', 'mean'),
+                '-': ('right_strand', 'mean'),
+            }
+        )
+        confident_strands = (
+            dfgb
+            .reset_index()
+            .melt(
+                id_vars=['peak_index'], 
+                value_vars=['+', '-'], 
+                var_name='Strand', 
+                value_name='strand_ratio',
+            )
+        )
+        peaks_stranded_pr = PyRanges(
+            confident_strands[confident_strands['strand_ratio'] >= min_strand_ratio]
+            .merge(
+                on=['peak_index', 'Strand'],
+                how='left',
+                right=(
+                    peaks_stranded_pr
+                    .as_df()[['peak_index', 'Chromosome', 'Start', 'End', 'Strand', 'peak_value']]
+                    .drop_duplicates(['peak_index', 'Strand'])
+                )
+            )
+        )
+        logger.info('Confident peaks stranded:')
+        _log_text(logger.info, repr(peaks_stranded_pr))
+
+        l_pr = PyRanges(
+            peaks_stranded_pr
+            .as_df()[['Chromosome', 'Start', 'End', 'Strand', 'peak_index', 'peak_value']]
+            .query('Strand == "+"')
+        )
+        r_pr = PyRanges(
+            peaks_stranded_pr
+            .as_df()[['Chromosome', 'Start', 'End', 'Strand', 'peak_index', 'peak_value']]
+            .query('Strand == "-"')
+        )
+        logger.info('Left and right anchors using stranded peaks')
+        _log_text(logger.info, repr(l_pr))
+        _log_text(logger.info, repr(r_pr))
+
+        anchors_filtered_pr = anchors_pr.join(peaks_stranded_pr, suffix='_peak', report_overlap=True, slack=anchor_peak_slack, strandedness='same', how='right')
+        anchors_filtered_pr = anchors_filtered_pr[anchors_filtered_pr.Overlap >= anchor_peak_min_overlap]
+        logger.info('Filtered anchors:')
+        _log_text(logger.info, repr(anchors_filtered_pr))
+
+        negatives_df = l_pr.join(r_pr, suffix='_r', slack=int(HICDIFFUSION_WINDOW_BP) * 2).as_df()
+        negatives_df['len_full'] = (negatives_df.End_r - negatives_df.Start)
+        negatives_df = negatives_df.query('len_full > 0 & len_full < @HICDIFFUSION_WINDOW_BP').reset_index(drop=True)
+        logger.info('Generated %d negative pairs', len(negatives_df))
+        
+        pairs_filtered_df = pairs_df[pairs_df.pair_index.isin(anchors_filtered_pr.pair_index)]
+        l_df = (
+            anchors_filtered_pr
+            .as_df()
+            .query('Strand == "+"')[['pair_index', 'peak_index', 'peak_value']]
+            .drop_duplicates(['pair_index', 'peak_index'])
+        )
+        r_df = (
+            anchors_filtered_pr
+            .as_df()
+            .query('Strand == "-"')[['pair_index', 'peak_index', 'peak_value']]
+            .drop_duplicates(['pair_index', 'peak_index'])
+        )
+        positives_df = (
+            pairs_filtered_df
+            .merge(l_df, on='pair_index')
+            .merge(r_df, on='pair_index', suffixes=('_l', '_r'))
+        )
+        logger.info('Filtered %d positive pairs', len(positives_df))
+
+        filter = pd.Series(zip(positives_df.peak_index_l, positives_df.peak_index_r))
+        df_ids = pd.Series(zip(negatives_df.peak_index, negatives_df.peak_index_r))
+        negatives_df = negatives_df[~df_ids.isin(filter)].reset_index(drop=True)
+        negatives_df['pet_counts'] = 0
+        logger.info('After removal of overlapped generated and positive pairs: negative pairs %d', len(negatives_df))
+        
+        dataset_df = pd.concat([
+            positives_df[['chr_l', 'start_l', 'end_l', 'start_r', 'end_r', 'pet_counts', 'peak_value_l', 'peak_value_r']]
+            .rename(
+                columns={'chr_l': 'chr'}
+            ),
+            negatives_df[['Chromosome', 'Start', 'End', 'Start_r', 'End_r', 'pet_counts', 'peak_value', 'peak_value_r']]
+            .rename(
+                columns={'Chromosome': 'chr', 'Start': 'start_l', 'End': 'end_l', 'Start_r': 'start_r', 'End_r': 'end_r', 'peak_value': 'peak_value_l'}
+            )
+        ])
+        return dataset_df
+    
+
+    @_wandb_run(job_type=JobType.DATA_GENERATION)
     def fimo(self, run: Run | None, motif: str = 'MA0139.2.meme:v0', sequence: str = 'GRCh38-reference-genome:v0'):
-        motif: Artifact = self._get_artifact(motif, run)
-        sequence: Artifact = self._get_artifact(sequence, run)
+        motif = self._get_artifact(motif, run)
+        sequence = self._get_artifact(sequence, run)
         filename = 'fimo_' + motif.path_no_suffix.name + '_' + sequence.path_no_suffix.name + '.tsv.gz'
         output = Path(self.data_root) / filename
         self._exec_fimo(sequence, motif, output)
