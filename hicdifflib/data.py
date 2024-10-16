@@ -157,7 +157,7 @@ class DataPipeline(DataConfig):
         sequence_paths = [seq.path for seq in sequences]
 
         pet_pairs: pd.DataFrame = pd.read_csv(pet_pairs.path).reset_index()
-        sequences = [SeqIO.parse(str(seq.path), 'fasta') for seq in sequences]
+        sequences = [SeqIO.to_dict(SeqIO.parse(str(seq.path), 'fasta')) for seq in sequences]
 
         sample_size = min(
             len(pet_pairs.query('pet_counts == 0')), 
@@ -197,7 +197,7 @@ class DataPipeline(DataConfig):
                 'end_l': row['end_l'] - context_start,
                 'start_r': row['start_r'] - context_start,
                 'end_r': row['end_r'] - context_start,
-                'sequence': str(seq[row['chr']][context_start: context_end]),
+                'sequence': str(seq[row['chr']][context_start: context_end].seq),
                 'index': row['index']
             })
         return pd.DataFrame(result)
