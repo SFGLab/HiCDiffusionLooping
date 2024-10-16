@@ -9,12 +9,14 @@ import subprocess
 from fire import Fire
 from dataclasses_json import dataclass_json
 from pyranges import PyRanges
+from Bio import SeqIO
+from Bio.Seq import Seq
 import pandas as pd
 import wandb
 from wandb.sdk.wandb_run import Run
 
 from hicdifflib.utils import read_paired_ends
-from hicdifflib.hicdiffusion import HICDIFFUSION_WINDOW_BP
+from hicdifflib.hicdiffusion import HICDIFFUSION_WINDOW_SIZE
 
 
 logging.basicConfig(
@@ -147,6 +149,61 @@ _to_pyrange_columns = {'chr': 'Chromosome', 'start': 'Start', 'end': 'End', 'str
 
 
 class DataPipeline(DataConfig):
+
+    @_wandb_run(job_type=JobType.DATA_GENERATION)    
+    def assemble(self, run: Run | None, pet_pairs: str, sequences: list[str]):
+        pet_pairs = self._get_artifact(pet_pairs, run)
+        sequences = [self._get_artifact(seq, run) for seq in sequences]
+        sequence_paths = [seq.path for seq in sequences]
+
+        pet_pairs: pd.DataFrame = pd.read_csv(pet_pairs.path).reset_index()
+        sequences = [SeqIO.parse(str(seq.path), 'fasta') for seq in sequences]
+
+        sample_size = min(
+            len(pet_pairs.query('pet_counts == 0')), 
+            len(pet_pairs.query('pet_counts > 0'))
+        )
+
+        dataset = []
+        for seq, path in zip(sequences, sequence_paths):
+            logging.info('Using sequences from %s', path)
+            df = self._assemble_subset(
+                df=pet_pairs.query('pet_counts == 0').sample(sample_size),
+                seq=seq
+            )
+            df['label'] = 0
+            dataset.append(df)
+            df = self._assemble_subset(
+                df=pet_pairs.query('pet_counts > 0').sample(sample_size),
+                seq=seq
+            )
+            df['label'] = 1
+            dataset.append(df)
+        dataset = pd.concat(dataset).sort_values('index')
+
+        path = Path(self.data_root) / 'dataset.csv'
+        dataset.to_csv(path, index=False)
+        self._log_artifact(run, path)
+
+    
+    def _assemble_subset(self, df: pd.DataFrame, seq: Seq) -> pd.DataFrame:
+        result = []
+        for row in df.to_dict('records'):
+            context_start = ((row['start_l'] + row['end_r']) // 2) - (HICDIFFUSION_WINDOW_SIZE // 2)
+            context_end = context_start + HICDIFFUSION_WINDOW_SIZE
+            result.append({
+                'chr': row['chr'],
+                'start_l': row['start_l'] - context_start,
+                'end_l': row['end_l'] - context_start,
+                'start_r': row['start_r'] - context_start,
+                'end_r': row['end_r'] - context_start,
+                'sequence': str(seq[row['chr']][context_start: context_end]),
+                'index': row['index']
+            })
+        return pd.DataFrame(result)
+
+
+
     @_wandb_run(job_type=JobType.DATA_GENERATION)
     def pet_pairs(
         self, 
@@ -323,7 +380,7 @@ class DataPipeline(DataConfig):
         logger.info('Filtered anchors:')
         _log_text(logger.info, repr(anchors_filtered_pr))
 
-        negatives_df = l_pr.join(r_pr, suffix='_r', slack=int(HICDIFFUSION_WINDOW_BP) * 2).as_df()
+        negatives_df = l_pr.join(r_pr, suffix='_r', slack=HICDIFFUSION_WINDOW_SIZE * 2).as_df()
         negatives_df['len_full'] = (negatives_df.End_r - negatives_df.Start)
         negatives_df = negatives_df.query('len_full > 0 & len_full < @HICDIFFUSION_WINDOW_BP').reset_index(drop=True)
         logger.info('Generated %d negative pairs', len(negatives_df))

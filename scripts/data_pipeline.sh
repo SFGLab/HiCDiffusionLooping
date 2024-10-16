@@ -12,3 +12,6 @@ python hicdifflib/data.py pet_pairs \
     --peaks 4DNFIV1N7TLK:v0 \
     --motifs '["fimo_MA0139.2_GRCh38_full_analysis_set_plus_decoy_hla.tsv.gz:latest","fimo_MA0139.2_4DNFI1GNQM8L.delly.vcf.tsv.gz:latest"]'
 
+python hicdifflib/data.py assemble \
+    --pet_pairs pet_pairs.csv:latest \
+    --sequences '["GRCh38-reference-genome:v0","4DNFI1GNQM8L.delly.vcf.fa:latest"]'

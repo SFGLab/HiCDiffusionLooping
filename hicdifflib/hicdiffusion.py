@@ -3,3 +3,4 @@ from HiCDiffusion.hicdiffusion_encoder_decoder_model import HiCDiffusionEncoderD
 
 
 HICDIFFUSION_WINDOW_BP = bp(2_097_152)
+HICDIFFUSION_WINDOW_SIZE = int(HICDIFFUSION_WINDOW_BP)
