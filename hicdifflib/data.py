@@ -1,8 +1,10 @@
 import logging
 from os import PathLike
-from typing import Any
+from typing import Any, TypedDict
 from pathlib import Path
 from dataclasses import dataclass, field
+from collections import defaultdict
+import random
 import warnings
 import subprocess
 
@@ -14,6 +16,7 @@ from Bio.Seq import Seq
 import pandas as pd
 import wandb
 from wandb.sdk.wandb_run import Run
+from torch.utils.data import Dataset
 
 from hicdifflib.utils import read_paired_ends
 from hicdifflib.hicdiffusion import HICDIFFUSION_WINDOW_SIZE
@@ -149,59 +152,6 @@ _to_pyrange_columns = {'chr': 'Chromosome', 'start': 'Start', 'end': 'End', 'str
 
 
 class DataPipeline(DataConfig):
-
-    @_wandb_run(job_type=JobType.DATA_GENERATION)    
-    def assemble(self, run: Run | None, pet_pairs: str, sequences: list[str]):
-        pet_pairs = self._get_artifact(pet_pairs, run)
-        sequences = [self._get_artifact(seq, run) for seq in sequences]
-        sequence_paths = [seq.path for seq in sequences]
-
-        pet_pairs: pd.DataFrame = pd.read_csv(pet_pairs.path).reset_index()
-        sequences = [SeqIO.to_dict(SeqIO.parse(str(seq.path), 'fasta')) for seq in sequences]
-
-        sample_size = min(
-            len(pet_pairs.query('pet_counts == 0')), 
-            len(pet_pairs.query('pet_counts > 0'))
-        )
-
-        dataset = []
-        for seq, path in zip(sequences, sequence_paths):
-            logging.info('Using sequences from %s', path)
-            df = self._assemble_subset(
-                df=pet_pairs.query('pet_counts == 0').sample(sample_size),
-                seq=seq
-            )
-            df['label'] = 0
-            dataset.append(df)
-            df = self._assemble_subset(
-                df=pet_pairs.query('pet_counts > 0').sample(sample_size),
-                seq=seq
-            )
-            df['label'] = 1
-            dataset.append(df)
-        dataset = pd.concat(dataset).sort_values('index')
-
-        path = Path(self.data_root) / 'dataset.csv'
-        dataset.to_csv(path, index=False)
-        self._log_artifact(run, path)
-
-    
-    def _assemble_subset(self, df: pd.DataFrame, seq: Seq) -> pd.DataFrame:
-        result = []
-        for row in df.to_dict('records'):
-            context_start = ((row['start_l'] + row['end_r']) // 2) - (HICDIFFUSION_WINDOW_SIZE // 2)
-            context_end = context_start + HICDIFFUSION_WINDOW_SIZE
-            result.append({
-                'chr': row['chr'],
-                'start_l': row['start_l'] - context_start,
-                'end_l': row['end_l'] - context_start,
-                'start_r': row['start_r'] - context_start,
-                'end_r': row['end_r'] - context_start,
-                'sequence': str(seq[row['chr']][context_start: context_end].seq),
-                'index': row['index']
-            })
-        return pd.DataFrame(result)
-
 
 
     @_wandb_run(job_type=JobType.DATA_GENERATION)
@@ -534,6 +484,67 @@ class DataPipeline(DataConfig):
         return WandbArtifact(artifact, self, run)
 
 
+class PairedEnds(TypedDict):
+    idx: int  # dataset index
+    seq_idx: int
+    seq: Seq
+    # local indices to sub sequences
+    start_l: int
+    end_l: int
+    start_r: int
+    end_r: int
+
+
+class PairedEndsDataset(Dataset):
+    def __init__(self, pairs: Path, sequences: list[Path], chroms: list[str]) -> None:
+        self._pairs_df = (
+            pd.read_csv(pairs)
+            .query('chr.isin(@chroms)')
+            .reset_index(drop=True)
+        )
+        self._pairs_df['label'] = (self._pairs_df['pet_counts'] > 0).astype(int)
+        self._sequences = self._load_sequences(sequences, chroms)
+
+    def _load_sequences(self, sequensces: list[Path], chroms: list[str]) -> dict:
+        result = defaultdict(list)
+        for seq_path in sequensces:
+            with open(seq_path) as f:
+                records = SeqIO.parse(f, 'fasta')
+                for record in records:
+                    if record.id not in chroms:
+                        continue
+                    result[record.id].append(record.seq)
+        return result
+
+    def __len__(self):
+        return len(self._pairs_df)
+
+    def get_pair(self, index: int, sequence_index: int | None = None) -> tuple[PairedEnds, int]:
+        row = self._pairs_df.iloc[index]
+        context_start = ((row.start_l + row.end_r) // 2) - (HICDIFFUSION_WINDOW_SIZE // 2)
+        context_end = context_start + HICDIFFUSION_WINDOW_SIZE
+
+        sequence_index = (
+            random.randint(0, len(self._sequences[row.chr]) - 1)
+            if sequence_index is None
+            else sequence_index
+        )
+        sequence = self._sequences[row.chr][sequence_index][context_start: context_end]
+        pair = dict(
+            idx=index,
+            seq_idx=sequence_index,
+            seq=sequence,
+            start_l=row.start_l - context_start,
+            end_l=row.end_l - context_start,
+            start_r=row.start_r - context_start,
+            end_r=row.end_r - context_start,
+        )
+        return pair, row.label
+
+    def __getitem__(self, index) -> tuple[PairedEnds, int]:
+        return self.get_pair(index)
+
+        
 
 if __name__ == '__main__':
     Fire(DataPipeline)
