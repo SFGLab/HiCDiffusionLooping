@@ -1,7 +1,6 @@
 from torchtyping import TensorType as _Tensor
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from hicdifflib.utils import bp
 from HiCDiffusion.hicdiffusion_encoder_decoder_model import HiCDiffusionEncoderDecoder
@@ -9,6 +8,8 @@ from HiCDiffusion.hicdiffusion_encoder_decoder_model import HiCDiffusionEncoderD
 
 HICDIFFUSION_WINDOW_BP = bp(2_097_152)
 HICDIFFUSION_WINDOW_SIZE = int(HICDIFFUSION_WINDOW_BP)
+HICDIFFUSION_OUTPUT_CHANNELS = 512
+HICDIFFUSION_OUTPUT_SIZE = 256
     
 
 class ResidualConv2d(nn.Module):
@@ -47,7 +48,7 @@ class HiCDiffusionContextEncoder(nn.Module):
     def forward(
         self, 
         inputs: _Tensor['batch', 'onehot', 'sequence'], 
-        mask: _Tensor['batch', 1, 256, 256]
+        mask: _Tensor['batch', 1, HICDIFFUSION_OUTPUT_SIZE, HICDIFFUSION_OUTPUT_SIZE]
     ) -> _Tensor['batch', 'hidden']:
         x = self.model.encoder(inputs)
         x = self.model.decoder(x)

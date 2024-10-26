@@ -3,6 +3,8 @@ import torch.nn as nn
 from torchtyping import TensorType as _Tensor
 from transformers import PretrainedConfig, PreTrainedModel, AutoModel
 
+from hicdifflib.hicdiffusion import HICDIFFUSION_OUTPUT_CHANNELS
+from hicdifflib.hicdiffusion import HICDIFFUSION_OUTPUT_SIZE
 from hicdifflib.hicdiffusion import ResidualConv2d, HiCDiffusionContextEncoder
 
 
@@ -72,7 +74,7 @@ class PairEncoderModel(PreTrainedModel):
         )
         context_model = HiCDiffusionContextEncoder(
             reduce_layer=nn.Sequential(
-                ResidualConv2d(512+1, 256, 3, 1, 1), 
+                ResidualConv2d(HICDIFFUSION_OUTPUT_CHANNELS + 1, 256, 3, 1, 1), 
                 ResidualConv2d(256, 128, 3, 1, 1), 
                 ResidualConv2d(128, 64, 3, 1, 1), 
                 ResidualConv2d(64, 32, 3, 1, 1), 
@@ -80,7 +82,7 @@ class PairEncoderModel(PreTrainedModel):
                 ResidualConv2d(16, 8, 3, 1, 1), 
                 ResidualConv2d(8, 1, 3, 1, 1),
                 nn.Flatten(),
-                nn.Linear(256*256, config.hidden_size),
+                nn.Linear(HICDIFFUSION_OUTPUT_SIZE * HICDIFFUSION_OUTPUT_SIZE, config.hidden_size),
                 nn.ReLU(),
             ),
             checkpoint=config.hicdiffusion_checkpoint

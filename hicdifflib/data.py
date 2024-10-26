@@ -23,7 +23,7 @@ from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizer
 
 from hicdifflib.utils import read_paired_ends, sequence_to_onehot, sequences_mask
-from hicdifflib.hicdiffusion import HICDIFFUSION_WINDOW_SIZE
+from hicdifflib.hicdiffusion import HICDIFFUSION_WINDOW_SIZE, HICDIFFUSION_OUTPUT_SIZE
 
 
 logging.basicConfig(
@@ -505,7 +505,7 @@ class PairedEndsDataset(Dataset):
         pairs: Path,
         sequences: list[Path],
         chroms: list[str],
-        mask_size: int = 256,
+        mask_size: int = HICDIFFUSION_OUTPUT_SIZE,
         tokenizer: PreTrainedTokenizer | None = None
     ) -> None:
         self._pairs_df = (
