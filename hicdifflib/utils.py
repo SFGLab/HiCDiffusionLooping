@@ -1,5 +1,6 @@
 import re
 from os import PathLike
+from math import floor, ceil
 from pathlib import Path
 
 import pandas as pd
@@ -16,6 +17,23 @@ def sequence_to_onehot(sequence: str) -> _Tensor['nucleotide', 'sequence']:
     codes = ['ACTGN'.index(char) for char in sequence]
     onehot = F.one_hot(torch.tensor(codes), 5).to(torch.float)
     return torch.transpose(onehot, 0, 1)
+
+
+def sequences_mask(
+        n: int,
+        start_l: int,
+        end_l: int, 
+        start_r: int, 
+        end_r: int, 
+        size: int
+    ) -> _Tensor[1, 'size', 'size']:
+        mask = torch.zeros([1, size, size], dtype=float).cuda()
+        start, end = floor(start_l / n * (size-1)), ceil(end_l / n * (size-1))
+        mask[:, start: end, :] = 1
+        start, end = floor(start_r / n * (size-1)), ceil(end_r / n * (size-1))
+        mask[:, :, start: end] = 1
+        return mask
+
 
 
 def read_paired_ends(

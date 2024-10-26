@@ -13,12 +13,16 @@ from dataclasses_json import dataclass_json
 from pyranges import PyRanges
 from Bio import SeqIO
 from Bio.Seq import Seq
+
 import pandas as pd
 import wandb
 from wandb.sdk.wandb_run import Run
-from torch.utils.data import Dataset
 
-from hicdifflib.utils import read_paired_ends
+import torch
+from torch.utils.data import Dataset
+from transformers import PreTrainedTokenizer
+
+from hicdifflib.utils import read_paired_ends, sequence_to_onehot, sequences_mask
 from hicdifflib.hicdiffusion import HICDIFFUSION_WINDOW_SIZE
 
 
@@ -496,7 +500,14 @@ class PairedEnds(TypedDict):
 
 
 class PairedEndsDataset(Dataset):
-    def __init__(self, pairs: Path, sequences: list[Path], chroms: list[str]) -> None:
+    def __init__(
+        self,
+        pairs: Path,
+        sequences: list[Path],
+        chroms: list[str],
+        mask_size: int = 256,
+        tokenizer: PreTrainedTokenizer | None = None
+    ) -> None:
         self._pairs_df = (
             pd.read_csv(pairs)
             .query('chr.isin(@chroms)')
@@ -504,6 +515,8 @@ class PairedEndsDataset(Dataset):
         )
         self._pairs_df['label'] = (self._pairs_df['pet_counts'] > 0).astype(int)
         self._sequences = self._load_sequences(sequences, chroms)
+        self._tokenizer = tokenizer
+        self.mask_size = mask_size
 
     def _load_sequences(self, sequensces: list[Path], chroms: list[str]) -> dict:
         result = defaultdict(list)
@@ -541,8 +554,27 @@ class PairedEndsDataset(Dataset):
         )
         return pair, row.label
 
-    def __getitem__(self, index) -> tuple[PairedEnds, int]:
-        return self.get_pair(index)
+    def __getitem__(self, index) -> tuple[dict, int]:
+        inputs, label = self.get_pair(index)
+        if self._tokenizer:
+            inputs['left_ids'] = self._tokenizer(
+                text=str(inputs['seq'][inputs['start_l']: inputs['end_l']]), 
+                return_tensors='pt'
+            )['input_ids']
+            inputs['right_ids'] = self._tokenizer(
+                text=str(inputs['seq'][inputs['start_r']: inputs['end_r']]), 
+                return_tensors = 'pt'
+            )["input_ids"]
+        inputs['context_sequence'] = torch.unsqueeze(sequence_to_onehot(str(inputs['seq'])), dim=0)
+        inputs['context_mask'] = sequences_mask(
+            n=len(inputs['seq']),
+            start_l=inputs['start_l'],
+            end_l=inputs['end_l'],
+            start_r=inputs['start_r'],
+            end_r=inputs['end_r'],
+            size=self.mask_sie
+        )
+        return inputs, label
 
         
 
