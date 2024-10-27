@@ -15,7 +15,7 @@ _unwanted_chars = re.compile(r'[^ACTG]')
 def sequence_to_onehot(sequence: str) -> _Tensor['nucleotide', 'sequence']:
     sequence = list(re.sub(_unwanted_chars, 'N', sequence.upper()))
     codes = ['ACTGN'.index(char) for char in sequence]
-    onehot = F.one_hot(torch.tensor(codes), 5).to(torch.float)
+    onehot = F.one_hot(torch.tensor(codes), 5).to(torch.float32)
     return torch.transpose(onehot, 0, 1)
 
 
@@ -26,12 +26,12 @@ def sequences_mask(
         start_r: int, 
         end_r: int, 
         size: int
-    ) -> _Tensor[1, 'size', 'size']:
-        mask = torch.zeros([1, size, size], dtype=float).cuda()
+    ) -> _Tensor[1, 1, 'size', 'size']:
+        mask = torch.zeros([1, 1, size, size], dtype=torch.float32)
         start, end = floor(start_l / n * (size-1)), ceil(end_l / n * (size-1))
-        mask[:, start: end, :] = 1
+        mask[:, :, start: end, :] = 1
         start, end = floor(start_r / n * (size-1)), ceil(end_r / n * (size-1))
-        mask[:, :, start: end] = 1
+        mask[:, :, :, start: end] = 1
         return mask
 
 

@@ -572,7 +572,7 @@ class PairedEndsDataset(Dataset):
             end_l=inputs['end_l'],
             start_r=inputs['start_r'],
             end_r=inputs['end_r'],
-            size=self.mask_sie
+            size=self.mask_size
         )
         return inputs, label
 

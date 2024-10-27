@@ -15,7 +15,7 @@ HICDIFFUSION_OUTPUT_SIZE = 256
 class ResidualConv2d(nn.Module):
 
     def __init__(self, hidden_in, hidden_out, kernel, padding, dilation):
-        super(ResidualConv2d, self).__init__()
+        super().__init__()
         self.main = nn.Sequential(
             nn.Conv2d(hidden_in, hidden_out, kernel, padding=padding, dilation=dilation),
             nn.BatchNorm2d(hidden_out),
@@ -36,6 +36,7 @@ class ResidualConv2d(nn.Module):
 
 class HiCDiffusionContextEncoder(nn.Module):
     def __init__(self, reduce_layer: nn.Module, checkpoint: str | None = None) -> None:
+        super().__init__()
         self.reduce = reduce_layer
         self.model = (
             HiCDiffusionEncoderDecoder.load_from_checkpoint(checkpoint)
@@ -43,7 +44,6 @@ class HiCDiffusionContextEncoder(nn.Module):
             HiCDiffusionEncoderDecoder(None, None, None)
         )
         del self.model.reduce_layer
-        super().__init__()
     
     def forward(
         self, 
