@@ -34,12 +34,13 @@ class PairEncoderConfig(PretrainedConfig):
         super().__init__(**kwargs)
 
 
-class MeanPooling(nn.Module):
-    def forward(
-        self, 
-        x: tuple[_Tensor['batch', 'sequence', 'features'], _Tensor['batch', 'features']]
-    ) -> _Tensor['batch', 'features']:
-        encoded, pooled = x
+class MeanPoolingEncoder(nn.Module):
+    def __init__(self, encoder: nn.Module):
+        super().__init__()
+        self.encoder = encoder
+    
+    def forward(self, *args, **kwargs) -> _Tensor['batch', 'features']:
+        encoded, pooled = self.encoder(*args, **kwargs)
         return torch.mean(encoded, dim=1)
 
 
@@ -48,7 +49,7 @@ class PairEncoderModel(PreTrainedModel):
 
     def _anchor_encoder(self, config):
         model = AutoModel.from_pretrained(config.anchor_encoder, trust_remote_code=True)
-        return nn.Sequential(model, MeanPooling())
+        return MeanPoolingEncoder(model)
 
 
     def __init__(self, config: PairEncoderConfig):
@@ -77,13 +78,21 @@ class PairEncoderModel(PreTrainedModel):
 
     def forward(
         self, 
-        left_ids: _Tensor['batch', 'sequence'],
-        right_ids: _Tensor['batch', 'sequence'],
+        left_input_ids: _Tensor['batch', 'sequence'],
+        right_input_ids: _Tensor['batch', 'sequence'],
         context_sequence: _Tensor['batch', 'onehot', 'sequence'],
         context_mask: _Tensor['batch', 'w', 'h'],
+        left_attention_mask: _Tensor['batch', 'sequence'] | None = None,
+        right_attention_mask: _Tensor['batch', 'sequence'] | None = None,
     ):
-        left_hidden = self.left_model(left_ids)
-        right_hidden = self.right_model(right_ids)
+        left_hidden = self.left_model(
+            input_ids=left_input_ids,
+            attention_mask=left_attention_mask,
+        )
+        right_hidden = self.right_model(
+            input_ids=right_input_ids,
+            attention_mask=right_attention_mask,
+        )
         context_hidden = self.context_model(context_sequence, context_mask)
         x = torch.cat([left_hidden, right_hidden, context_hidden], dim=1)
         x = self.final(x)
@@ -101,15 +110,19 @@ class PairEncoderForClassification(PreTrainedModel):
 
     def forward(
         self, 
-        left_ids: _Tensor['batch', 'sequence'],
-        right_ids: _Tensor['batch', 'sequence'],
+        left_input_ids: _Tensor['batch', 'sequence'],
+        right_input_ids: _Tensor['batch', 'sequence'],
         context_sequence: _Tensor['batch', 'onehot', 'sequence'],
         context_mask: _Tensor['batch', 'w', 'h'],
         labels: _Tensor['batch', 'label'] | None = None,
+        left_attention_mask: _Tensor['batch', 'sequence'] | None = None,
+        right_attention_mask: _Tensor['batch', 'sequence'] | None = None,
     ):
         x = self.encoder(
-            left_ids=left_ids,
-            right_ids=right_ids,
+            left_input_ids=left_input_ids,
+            right_input_ids=right_input_ids,
+            left_attention_mask=left_attention_mask,
+            right_attention_mask=right_attention_mask,
             context_sequence=context_sequence,
             context_mask=context_mask,
         )

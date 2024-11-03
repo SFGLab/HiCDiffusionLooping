@@ -22,7 +22,7 @@ import torch
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizer
 
-from hicdifflib.utils import read_paired_ends, sequence_to_onehot, sequences_mask
+from hicdifflib.utils import read_paired_ends, sequence_to_onehot, sequences_mask, bstr
 from hicdifflib.hicdiffusion import HICDIFFUSION_WINDOW_SIZE, HICDIFFUSION_OUTPUT_SIZE
 
 
@@ -488,17 +488,6 @@ class DataPipeline(DataConfig):
         return WandbArtifact(artifact, self, run)
 
 
-class PairedEnds(TypedDict):
-    idx: int  # dataset index
-    seq_idx: int
-    seq: Seq
-    # local indices to sub sequences
-    start_l: int
-    end_l: int
-    start_r: int
-    end_r: int
-
-
 class PairedEndsDataset(Dataset):
     def __init__(
         self,
@@ -508,6 +497,7 @@ class PairedEndsDataset(Dataset):
         mask_size: int = HICDIFFUSION_OUTPUT_SIZE,
         tokenizer: PreTrainedTokenizer | None = None
     ) -> None:
+        self._logger = logging.getLogger(self.__class__.__name__)
         self._pairs_df = (
             pd.read_csv(pairs)
             .query('chr.isin(@chroms)')
@@ -516,6 +506,14 @@ class PairedEndsDataset(Dataset):
         self._pairs_df['label'] = (self._pairs_df['pet_counts'] > 0).astype(int)
         self._sequences = self._load_sequences(sequences, chroms)
         self._tokenizer = tokenizer
+
+        self._logger.info("Validating sequences (%d pairs)", len(self._pairs_df))
+        self._valid_sequences = {}
+        for index in range(len(self._pairs_df)):
+            checked = self._check_sequences(index)
+            if checked:
+                self._valid_sequences[index] = checked
+        self._logger.info("%d pairs have at least one valid sequence", len(self._valid_sequences))
         self.mask_size = mask_size
 
     def _load_sequences(self, sequensces: list[Path], chroms: list[str]) -> dict:
@@ -527,23 +525,53 @@ class PairedEndsDataset(Dataset):
                     if record.id not in chroms:
                         continue
                     result[record.id].append(record.seq)
+                    self._logger.info("Loaded '%s' from '%s' (%s)", record.id, seq_path.name, bstr(len(record.seq)))
         return result
 
     def __len__(self):
-        return len(self._pairs_df)
+        return len(self._valid_sequences)
 
-    def get_pair(self, index: int, sequence_index: int | None = None) -> tuple[PairedEnds, int]:
+    def _check_sequences(self, index: int) -> dict[int, tuple[int, int]]:
         row = self._pairs_df.iloc[index]
-        context_start = ((row.start_l + row.end_r) // 2) - (HICDIFFUSION_WINDOW_SIZE // 2)
-        context_end = context_start + HICDIFFUSION_WINDOW_SIZE
+        result = {}
+        for i, seq in enumerate(self._sequences[row.chr]):
+            if any(x >= len(seq) for x in [row.start_l + 1, row.end_l, row.start_r + 1, row.end_r]):
+                continue
+            min_context = max(row.end_r - HICDIFFUSION_WINDOW_SIZE - 1, 0)
+            max_context = min(row.start_l + HICDIFFUSION_WINDOW_SIZE + 1, len(seq))
+            if (
+                min_context > row.start_l or 
+                max_context < row.end_r or 
+                max_context - min_context < HICDIFFUSION_WINDOW_SIZE
+            ):
+                continue
+            result[i] = (min_context, max_context)
+        return result
+        
 
+    def get_pair(self, index: int, sequence_index: int | None = None, context_from: int | None = None, tokenize: bool = True) -> dict:
+        row = self._pairs_df.iloc[index]
+        valid_sequences = self._valid_sequences[index]
+        
         sequence_index = (
-            random.randint(0, len(self._sequences[row.chr]) - 1)
+            random.choice(list(valid_sequences.keys()))
             if sequence_index is None
             else sequence_index
         )
+
+        min_context, max_context = valid_sequences[sequence_index]
+
+        context_from = (
+            random.randint(0, row.start_l - min_context)
+            if context_from is None
+            else context_from
+        )
+        
+        context_start = min_context + context_from
+        context_end = context_start + HICDIFFUSION_WINDOW_SIZE
+
         sequence = self._sequences[row.chr][sequence_index][context_start: context_end]
-        pair = dict(
+        inputs = dict(
             idx=index,
             seq_idx=sequence_index,
             seq=sequence,
@@ -551,20 +579,21 @@ class PairedEndsDataset(Dataset):
             end_l=row.end_l - context_start,
             start_r=row.start_r - context_start,
             end_r=row.end_r - context_start,
+            label=float(row.label),
         )
-        return pair, row.label
-
-    def __getitem__(self, index) -> tuple[dict, int]:
-        inputs, label = self.get_pair(index)
-        if self._tokenizer:
-            inputs['left_ids'] = self._tokenizer(
+        
+        if self._tokenizer or tokenize:
+            left = self._tokenizer(
                 text=str(inputs['seq'][inputs['start_l']: inputs['end_l']]), 
                 return_tensors='pt'
-            )['input_ids']
-            inputs['right_ids'] = self._tokenizer(
+            )
+            right = self._tokenizer(
                 text=str(inputs['seq'][inputs['start_r']: inputs['end_r']]), 
                 return_tensors = 'pt'
-            )["input_ids"]
+            )
+            inputs['left_input_ids'] = left['input_ids']
+            inputs['right_input_ids'] = left['input_ids']
+            
         inputs['context_sequence'] = torch.unsqueeze(sequence_to_onehot(str(inputs['seq'])), dim=0)
         inputs['context_mask'] = sequences_mask(
             n=len(inputs['seq']),
@@ -574,7 +603,15 @@ class PairedEndsDataset(Dataset):
             end_r=inputs['end_r'],
             size=self.mask_size
         )
-        return inputs, label
+        return inputs
+
+    def __getitem__(self, index) -> dict:
+        try:
+            inputs = self.get_pair(index)
+        except Exception as e:
+            print(index)
+            raise e
+        return inputs
 
         
 
