@@ -1,5 +1,6 @@
 import logging
 from os import PathLike
+from math import floor
 from typing import Any, TypedDict
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -495,7 +496,8 @@ class PairedEndsDataset(Dataset):
         sequences: list[Path],
         chroms: list[str],
         mask_size: int = HICDIFFUSION_OUTPUT_SIZE,
-        tokenizer: PreTrainedTokenizer | None = None
+        tokenizer: PreTrainedTokenizer | None = None,
+        center_window: bool = False
     ) -> None:
         self._logger = logging.getLogger(self.__class__.__name__)
         self._pairs_df = (
@@ -508,13 +510,12 @@ class PairedEndsDataset(Dataset):
         self._tokenizer = tokenizer
 
         self._logger.info("Validating sequences (%d pairs)", len(self._pairs_df))
-        self._valid_sequences = {}
+        self._valid_sequences = []
         for index in range(len(self._pairs_df)):
-            checked = self._check_sequences(index)
-            if checked:
-                self._valid_sequences[index] = checked
-        self._logger.info("%d pairs have at least one valid sequence", len(self._valid_sequences))
+            self._valid_sequences += self._check_sequences(index)
+        self._logger.info("%d valid sequences", len(self._valid_sequences))
         self.mask_size = mask_size
+        self.center_window = center_window
 
     def _load_sequences(self, sequensces: list[Path], chroms: list[str]) -> dict:
         result = defaultdict(list)
@@ -531,9 +532,9 @@ class PairedEndsDataset(Dataset):
     def __len__(self):
         return len(self._valid_sequences)
 
-    def _check_sequences(self, index: int) -> dict[int, tuple[int, int]]:
+    def _check_sequences(self, index: int) -> list[dict]:
         row = self._pairs_df.iloc[index]
-        result = {}
+        result = []
         for i, seq in enumerate(self._sequences[row.chr]):
             if any(x >= len(seq) for x in [row.start_l + 1, row.end_l, row.start_r + 1, row.end_r]):
                 continue
@@ -545,27 +546,23 @@ class PairedEndsDataset(Dataset):
                 max_context - min_context < HICDIFFUSION_WINDOW_SIZE
             ):
                 continue
-            result[i] = (min_context, max_context)
+            result.append({'idx': index, 'seq_idx': i, 'min': min_context, 'max': max_context})
         return result
         
 
-    def get_pair(self, index: int, sequence_index: int | None = None, context_from: int | None = None, tokenize: bool = True) -> dict:
+    def get_pair(self, i: int, context_from: int | None = None, tokenize: bool = True) -> dict:
+        valid_sequence = self._valid_sequences[i]
+        index = valid_sequence['idx']
         row = self._pairs_df.iloc[index]
-        valid_sequences = self._valid_sequences[index]
-        
-        sequence_index = (
-            random.choice(list(valid_sequences.keys()))
-            if sequence_index is None
-            else sequence_index
-        )
+        sequence_index = valid_sequence['seq_idx']
+        min_context = valid_sequence['min']
+        max_context = valid_sequence['max']
 
-        min_context, max_context = valid_sequences[sequence_index]
-
-        context_from = (
-            random.randint(0, row.start_l - min_context)
-            if context_from is None
-            else context_from
-        )
+        if context_from is None:
+            if self.center_window:
+                context_from = floor((row.start_l - min_context) / 2)
+            else:
+                context_from = random.randint(0, row.start_l - min_context)
         
         context_start = min_context + context_from
         context_end = context_start + HICDIFFUSION_WINDOW_SIZE
@@ -582,7 +579,7 @@ class PairedEndsDataset(Dataset):
             label=float(row.label),
         )
         
-        if self._tokenizer or tokenize:
+        if self._tokenizer and tokenize:
             left = self._tokenizer(
                 text=str(inputs['seq'][inputs['start_l']: inputs['end_l']]), 
                 return_tensors='pt'
@@ -605,9 +602,9 @@ class PairedEndsDataset(Dataset):
         )
         return inputs
 
-    def __getitem__(self, index) -> dict:
+    def __getitem__(self, i: int) -> dict:
         try:
-            inputs = self.get_pair(index)
+            inputs = self.get_pair(i)
         except Exception as e:
             print(index)
             raise e
