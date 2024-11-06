@@ -1,7 +1,7 @@
 import logging
 from os import PathLike
 from math import floor
-from typing import Any, TypedDict
+from typing import Any
 from pathlib import Path
 from dataclasses import dataclass, field
 from collections import defaultdict
@@ -13,7 +13,7 @@ from fire import Fire
 from dataclasses_json import dataclass_json
 from pyranges import PyRanges
 from Bio import SeqIO
-from Bio.Seq import Seq
+from tqdm import trange
 
 import pandas as pd
 import wandb
@@ -37,8 +37,8 @@ logging.basicConfig(
 @dataclass
 class DataConfig:
     chroms: list[str] = field(
-        default_factory=lambda: [f'chr{i+1}' for i in range(22)] + ['chrX', 'chrY']
-        # "$(seq -f 'chr%g' 1 22) chrX chrY"
+        default_factory=lambda: [f'chr{i+1}' for i in range(22)]
+        # "$(seq -f 'chr%g' 1 22)"
     )
     data_root: str = './data'
     skip_cache: bool = False
@@ -157,7 +157,30 @@ _to_pyrange_columns = {'chr': 'Chromosome', 'start': 'Start', 'end': 'End', 'str
 
 
 class DataPipeline(DataConfig):
-
+    
+    def test_pairs_dataset(self, pet_pairs: list[str | Artifact], sequences: list[str | Artifact]):
+        pairs = self._get_artifact(pet_pairs).path
+        sequences = [self._get_artifact(fasta).path for fasta in sequences]
+        dataset = PairedEndsDataset(pairs=pairs, sequences=sequences, chroms=self.chroms)
+        for i in trange(len(dataset)):
+            for context_offset in (0, 0.5, 1):
+                data = dataset.get_pair_context(i, context_offset)
+                row = dataset._pairs_df.loc[data['pair_idx']]
+                seq = dataset._sequences[row.chr][data['seq_idx']]
+                
+                anchor_test = seq[row.start_l: row.end_l]
+                if data['anchor_l'] != anchor_test:
+                    data['anchor_l_len'] = len(data['anchor_l'])
+                    data['anchor_l_test'] = anchor_test
+                    data['anchor_l_test_len'] = len(anchor_test)
+                    raise AssertionError(context_offset, data)
+                
+                anchor_test = seq[row.start_r: row.end_r]
+                if data['anchor_r'] != anchor_test:
+                    data['anchor_r_len'] = len(data['anchor_r'])
+                    data['anchor_r_test'] = anchor_test
+                    data['anchor_r_test_len'] = len(anchor_test)
+                    raise AssertionError(context_offset, data)
 
     @_wandb_run(job_type=JobType.DATA_GENERATION)
     def pet_pairs(
@@ -497,13 +520,12 @@ class PairedEndsDataset(Dataset):
         chroms: list[str],
         mask_size: int = HICDIFFUSION_OUTPUT_SIZE,
         tokenizer: PreTrainedTokenizer | None = None,
-        center_window: bool = False
+        center_context: bool = False
     ) -> None:
         self._logger = logging.getLogger(self.__class__.__name__)
         self._pairs_df = (
             pd.read_csv(pairs)
             .query('chr.isin(@chroms)')
-            .reset_index(drop=True)
         )
         self._pairs_df['label'] = (self._pairs_df['pet_counts'] > 0).astype(int)
         self._sequences = self._load_sequences(sequences, chroms)
@@ -511,11 +533,11 @@ class PairedEndsDataset(Dataset):
 
         self._logger.info("Validating sequences (%d pairs)", len(self._pairs_df))
         self._valid_sequences = []
-        for index in range(len(self._pairs_df)):
-            self._valid_sequences += self._check_sequences(index)
+        for pair_idx in self._pairs_df.index:
+            self._valid_sequences += self._check_pair_sequences(pair_idx)
         self._logger.info("%d valid sequences", len(self._valid_sequences))
         self.mask_size = mask_size
-        self.center_window = center_window
+        self.center_context = center_context
 
     def _load_sequences(self, sequensces: list[Path], chroms: list[str]) -> dict:
         result = defaultdict(list)
@@ -532,86 +554,100 @@ class PairedEndsDataset(Dataset):
     def __len__(self):
         return len(self._valid_sequences)
 
-    def _check_sequences(self, index: int) -> list[dict]:
-        row = self._pairs_df.iloc[index]
+    def _check_pair_sequences(self, pair_idx: int) -> list[dict]:
+        row = self._pairs_df.loc[pair_idx]
         result = []
-        for i, seq in enumerate(self._sequences[row.chr]):
-            if any(x >= len(seq) for x in [row.start_l + 1, row.end_l, row.start_r + 1, row.end_r]):
+        for seq_idx, seq in enumerate(self._sequences[row.chr]):
+            # check if any index is higher than a sequence
+            if any(x >= len(seq) for x in [row.start_l, row.end_l - 1, row.start_r, row.end_r - 1]):
                 continue
-            min_context = max(row.end_r - HICDIFFUSION_WINDOW_SIZE - 1, 0)
-            max_context = min(row.start_l + HICDIFFUSION_WINDOW_SIZE + 1, len(seq))
+            
+            # bound possible range of window positions which includes both anchors
+            min_context_start = max(row.end_r - HICDIFFUSION_WINDOW_SIZE, 0)
+            max_context_end = min(row.start_l + HICDIFFUSION_WINDOW_SIZE, len(seq))
             if (
-                min_context > row.start_l or 
-                max_context < row.end_r or 
-                max_context - min_context < HICDIFFUSION_WINDOW_SIZE
+                min_context_start > row.start_l or 
+                max_context_end < row.end_r or 
+                max_context_end - min_context_start < HICDIFFUSION_WINDOW_SIZE
             ):
                 continue
-            result.append({'idx': index, 'seq_idx': i, 'min': min_context, 'max': max_context})
+            result.append({
+                'pair_idx': pair_idx, 
+                'seq_idx': seq_idx, 
+                'min_context_start': min_context_start, 
+                'max_context_start': max_context_end - HICDIFFUSION_WINDOW_SIZE
+            })
         return result
 
-    def _context_from(self, min_context: int, max_context: int, context_offset: float | None = None) -> int:
-        context_from_max = max_context - min_context - HICDIFFUSION_WINDOW_SIZE # - 1
+    def _context_from(self, max_offset: int, context_offset: float | None = None) -> int:
         if context_offset is not None:
-            return floor(context_from_max * context_offset) 
+            return floor(max_offset * context_offset) 
         if self.center_window:
-            return floor(context_from_max * 0.5) 
-        return random.randint(0, context_from_max)
+            return floor(max_offset * 0.5) 
+        return random.randint(0, max_offset)
             
 
-    def get_indices(self, i: int, context_offset: float | None = None) -> dict:
-        valid_sequence = self._valid_sequences[i]
-        index = valid_sequence['idx']        
-        sequence_index = valid_sequence['seq_idx']
+    def get_pair_context(self, i: int, context_offset: float | None = None) -> dict:
+        valid_seq = self._valid_sequences[i]
+        row = self._pairs_df.loc[valid_seq['pair_idx']]
         
-        context_from = self._context_from(valid_sequence['min'], valid_sequence['max'], context_offset)
-        context_start = valid_sequence['min'] + context_from
+        context_from = self._context_from(
+            max_offset=valid_seq['max_context_start'] - valid_seq['min_context_start'], 
+            context_offset=context_offset
+        )
+        context_start = valid_seq['min_context_start'] + context_from
         context_end = context_start + HICDIFFUSION_WINDOW_SIZE
+        seq = self._sequences[row.chr][valid_seq['seq_idx']]
 
-        row = self._pairs_df.iloc[index]
-        return dict(
-            idx=index,
-            seq_idx=sequence_index,
-            seq_start=context_start,
-            seq_end=context_end,
-            start_l=row.start_l - context_start,
-            end_l=row.end_l - context_start,
-            start_r=row.start_r - context_start,
-            end_r=row.end_r - context_start,
+        data = dict(
+            sample_idx=i,
+            pair_idx=valid_seq['pair_idx'],
+            seq_idx=valid_seq['seq_idx'],
+            chr=row.chr,
+            context_slice=slice(context_start, context_end),
+            anchor_slice_l=slice(row.start_l - context_start, row.end_l - context_start),
+            anchor_slice_r=slice(row.start_r - context_start, row.end_r - context_start),
             label=float(row.label),
         )
+        data['context'] = seq[data['context_slice']]
+        data['anchor_l'] = data['context'][data['anchor_slice_l']]
+        data['anchor_r'] = data['context'][data['anchor_slice_r']]
+        return data
 
-    def get_pair(self, i: int, context_offset: float | None = None, tokenize: bool = True) -> dict:
-        inputs = self.get_indices(i, context_from)
-        inputs['seq'] = self._sequences[row.chr][sequence_index][context_start: context_end]
+    def get_item(
+        self, 
+        i: int, 
+        context_offset: float | None = None, 
+        tokenize: bool = True, 
+        return_tensors: str | None = None
+    ) -> dict:
+        inputs = self.get_pair_context(i, context_offset)
         
         if self._tokenizer and tokenize:
-            left = self._tokenizer(
-                text=str(inputs['seq'][inputs['start_l']: inputs['end_l']]), 
-                return_tensors='pt'
-            )
-            right = self._tokenizer(
-                text=str(inputs['seq'][inputs['start_r']: inputs['end_r']]), 
-                return_tensors = 'pt'
-            )
+            left = self._tokenizer(text=str(inputs['anchor_l']), return_tensors=return_tensors)
+            right = self._tokenizer(text=str(inputs['anchor_r']), return_tensors=return_tensors)
             inputs['left_input_ids'] = left['input_ids']
-            inputs['right_input_ids'] = left['input_ids']
+            inputs['right_input_ids'] = right['input_ids']
             
-        inputs['context_sequence'] = torch.unsqueeze(sequence_to_onehot(str(inputs['seq'])), dim=0)
+        inputs['context_sequence'] = torch.unsqueeze(
+            input=sequence_to_onehot(str(inputs['context'])), 
+            dim=0
+        )
         inputs['context_mask'] = sequences_mask(
             n=len(inputs['seq']),
-            start_l=inputs['start_l'],
-            end_l=inputs['end_l'],
-            start_r=inputs['start_r'],
-            end_r=inputs['end_r'],
+            start_l=inputs['anchor_slice_l'].start,
+            end_l=inputs['anchor_slice_l'].stop,
+            start_r=inputs['anchor_slice_r'].start,
+            end_r=inputs['anchor_slice_r'].stop,
             size=self.mask_size
         )
         return inputs
 
     def __getitem__(self, i: int) -> dict:
         try:
-            inputs = self.get_pair(i)
+            inputs = self.get_item(i)
         except Exception as e:
-            print(index)
+            print(i)
             raise e
         return inputs
 
