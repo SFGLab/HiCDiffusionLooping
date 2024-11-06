@@ -548,36 +548,41 @@ class PairedEndsDataset(Dataset):
                 continue
             result.append({'idx': index, 'seq_idx': i, 'min': min_context, 'max': max_context})
         return result
-        
 
-    def get_pair(self, i: int, context_from: int | None = None, tokenize: bool = True) -> dict:
+    def _context_from(self, min_context: int, max_context: int, context_offset: float | None = None) -> int:
+        context_from_max = max_context - min_context - HICDIFFUSION_WINDOW_SIZE # - 1
+        if context_offset is not None:
+            return floor(context_from_max * context_offset) 
+        if self.center_window:
+            return floor(context_from_max * 0.5) 
+        return random.randint(0, context_from_max)
+            
+
+    def get_indices(self, i: int, context_offset: float | None = None) -> dict:
         valid_sequence = self._valid_sequences[i]
-        index = valid_sequence['idx']
-        row = self._pairs_df.iloc[index]
+        index = valid_sequence['idx']        
         sequence_index = valid_sequence['seq_idx']
-        min_context = valid_sequence['min']
-        max_context = valid_sequence['max']
-
-        if context_from is None:
-            if self.center_window:
-                context_from = floor((row.start_l - min_context) / 2)
-            else:
-                context_from = random.randint(0, row.start_l - min_context)
         
-        context_start = min_context + context_from
+        context_from = self._context_from(valid_sequence['min'], valid_sequence['max'], context_offset)
+        context_start = valid_sequence['min'] + context_from
         context_end = context_start + HICDIFFUSION_WINDOW_SIZE
 
-        sequence = self._sequences[row.chr][sequence_index][context_start: context_end]
-        inputs = dict(
+        row = self._pairs_df.iloc[index]
+        return dict(
             idx=index,
             seq_idx=sequence_index,
-            seq=sequence,
+            seq_start=context_start,
+            seq_end=context_end,
             start_l=row.start_l - context_start,
             end_l=row.end_l - context_start,
             start_r=row.start_r - context_start,
             end_r=row.end_r - context_start,
             label=float(row.label),
         )
+
+    def get_pair(self, i: int, context_offset: float | None = None, tokenize: bool = True) -> dict:
+        inputs = self.get_indices(i, context_from)
+        inputs['seq'] = self._sequences[row.chr][sequence_index][context_start: context_end]
         
         if self._tokenizer and tokenize:
             left = self._tokenizer(
