@@ -47,8 +47,13 @@ class MeanPoolingEncoder(nn.Module):
 class PairEncoderModel(PreTrainedModel):
     config_class = PairEncoderConfig
 
+    def _freeze_model(self, model):
+        for param in model.parameters():
+            param.requires_grad = False
+
     def _anchor_encoder(self, config):
         model = AutoModel.from_pretrained(config.anchor_encoder, trust_remote_code=True)
+        self._freeze_model(model)
         return MeanPoolingEncoder(model)
 
 
@@ -74,6 +79,8 @@ class PairEncoderModel(PreTrainedModel):
             ),
             checkpoint=config.hicdiffusion_checkpoint
         )
+        self._freeze_model(self.context_model.model.encoder)
+        self._freeze_model(self.context_model.model.decoder)
         self.final = nn.Sequential(nn.Linear(config.hidden_size*3, config.hidden_size), nn.ReLU())
 
     def forward(

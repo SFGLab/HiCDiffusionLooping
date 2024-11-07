@@ -582,7 +582,7 @@ class PairedEndsDataset(Dataset):
     def _context_from(self, max_offset: int, context_offset: float | None = None) -> int:
         if context_offset is not None:
             return floor(max_offset * context_offset) 
-        if self.center_window:
+        if self.center_context:
             return floor(max_offset * 0.5) 
         return random.randint(0, max_offset)
             
@@ -634,7 +634,7 @@ class PairedEndsDataset(Dataset):
             dim=0
         )
         inputs['context_mask'] = sequences_mask(
-            n=len(inputs['seq']),
+            n=len(inputs['context']),
             start_l=inputs['anchor_slice_l'].start,
             end_l=inputs['anchor_slice_l'].stop,
             start_r=inputs['anchor_slice_r'].start,
