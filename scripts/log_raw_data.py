@@ -15,11 +15,16 @@ if __name__ == '__main__':
         "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa"
     )
     run.log_artifact(artifact)
+    
+    def _read_supp_files(path):
+        supp_files = pd.read_csv(path, sep='\t', skiprows=1)
+        supp_files = supp_files[~supp_files["File Download URL"].str.contains('#')]
+        return supp_files
 
-    supp_files = pd.read_csv('data/4DNES7IB5LY9_biorep2.tsv',
-                             sep='\t',
-                             skiprows=1)
-    supp_files = supp_files[~supp_files["File Download URL"].str.contains('#')]
+    supp_files = pd.concat([
+      _read_supp_files('data/4DNES7IB5LY9_biorep1.tsv'),
+      _read_supp_files('data/4DNES7IB5LY9_biorep2.tsv')  
+    ])
 
     for x in supp_files.to_dict('records'):
         artifact_4dn = wandb.Artifact(
