@@ -101,8 +101,12 @@ def _wandb_run(**wandb_kwargs):
         def decorated_method(self: DataConfig, *args, **kwargs) -> Any:
             if not self.wandb:
                 return method(self, None, *args, **kwargs)
-            run = wandb.init(project=self.wandb_project, name=method.__name__, **wandb_kwargs)
-            run.log(self.to_dict())
+            run = wandb.init(
+                project=self.wandb_project, 
+                name=method.__name__, 
+                config=self.to_dict(), 
+                **wandb_kwargs
+            )
             result = method(self, run, *args, **kwargs)
             run.finish()
             return result
