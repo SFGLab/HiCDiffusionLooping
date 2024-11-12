@@ -41,7 +41,8 @@ class DataConfig:
         # "$(seq -f 'chr%g' 1 22)"
     )
     data_root: str = './data'
-    skip_cache: bool = False
+    skip_cache: bool = True # some files are too large for keeping 
+                            # them in data_root and WANDB_CACHE_DIR
     skip_intermediary: bool = False
     wandb: bool = True
     wandb_project: str = 'HiCDiffusionLooping'

@@ -1,17 +1,16 @@
-# debug using small bam file
-# python hicdifflib/data.py delly_call 4DNFIG85Y8QS:v0
-# python hicdifflib/data.py vcf_consensus 4DNFIG85Y8QS.delly.vcf.gz:latest
+# export WANDB_CACHE_DIR="/mnt/evafs/scratch/shared/imialeshka/.cache/wandb"
+export SINGULARITY_BIND="/mnt/evafs/scratch/shared/imialeshka/hicdata"
 
-python hicdifflib/data.py delly_call 4DNFI1GNQM8L:v0
-python hicdifflib/data.py vcf_consensus 4DNFI1GNQM8L.delly.vcf.gz:latest
-# MA0139.2.meme:v0
-python hicdifflib/data.py fimo  # GRCh38-reference-genome
-python hicdifflib/data.py fimo --sequence 4DNFI1GNQM8L.delly.vcf.fa:latest
-python hicdifflib/data.py pet_pairs \
-    --pairs 4DNFI9SL1WSF:v0 \
-    --peaks 4DNFIV1N7TLK:v0 \
-    --motifs '["fimo_MA0139.2_GRCh38_full_analysis_set_plus_decoy_hla.tsv.gz:latest","fimo_MA0139.2_4DNFI1GNQM8L.delly.vcf.tsv.gz:latest"]'
+function pipeline(){
+  python hicdifflib/data.py --data_root $SINGULARITY_BIND $@
+}
 
-python hicdifflib/data.py assemble \
-    --pet_pairs pet_pairs.csv:latest \
-    --sequences '["GRCh38-reference-genome:v0","4DNFI1GNQM8L.delly.vcf.fa:latest"]'
+pipeline delly_call 4DNFI2OEE66L:v0 || exit
+pipeline delly_call 4DNFI1GNQM8L:v0 || exit
+
+pipeline vcf_consensus 4DNFI2OEE66L.delly.vcf.gz:latest || exit
+pipeline vcf_consensus 4DNFI1GNQM8L.delly.vcf.gz:latest || exit
+
+pipeline fimo --motif MA0139.2.meme:v0 --sequence GRCh38-reference-genome:v0 || exit
+pipeline fimo --motif MA0139.2.meme:v0 --sequence 4DNFI2OEE66L.delly.vcf.fa:latest || exit
+pipeline fimo --motif MA0139.2.meme:v0 --sequence 4DNFI1GNQM8L.delly.vcf.fa:latest || exit
