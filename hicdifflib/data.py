@@ -191,9 +191,9 @@ class DataPipeline(DataConfig):
     def pet_pairs(
         self, 
         run: Run | None, 
-        pairs: str, 
-        peaks: str, 
-        motifs: list[str],
+        pairs: list[str | Artifact], 
+        peaks: list[str | Artifact], 
+        motifs: list[str | Artifact],
         peak_strand_slack: int = 0, 
         min_strand_ratio: float = 0.5,
         anchor_peak_slack: int = 0,
@@ -207,28 +207,34 @@ class DataPipeline(DataConfig):
                 'anchor_peak_min_overlap': anchor_peak_min_overlap,
             })
 
-        pairs = self._get_artifact(pairs, run)
-        peaks = self._get_artifact(peaks, run)
-        motifs = [self._get_artifact(motif, run) for motif in motifs]
+        pairs = [self._get_artifact(x, run) for x in pairs]
+        peaks = [self._get_artifact(x, run) for x in peaks]
+        motifs = [self._get_artifact(x, run) for x in motifs]
 
         pairs_df = (
-            read_paired_ends(pairs.path, extra_columns=['pet_counts'])
-            .query('len_full <= @HICDIFFUSION_WINDOW_BP')
+            pd.concat([
+                read_paired_ends(artifact.path, extra_columns=['pet_counts'])
+                for artifact in pairs
+            ])
+            .query('len_full <= @HICDIFFUSION_WINDOW_SIZE')
             .reset_index()
             .rename(columns={'index': 'pair_index'})
         )
 
-        peaks_df = pd.read_csv(
-            peaks.path, 
-            sep='\t', 
-            names=['chr', 'start', 'end', 'c1', 'c2', 'c3', 'value', 'c4', 'c5']
-        )
+        peaks_df = pd.concat([
+            pd.read_csv(
+                artifact.path, 
+                sep='\t', 
+                names=['chr', 'start', 'end', 'c1', 'c2', 'c3', 'value', 'c4', 'c5']
+            )
+            for artifact in peaks
+        ])
         peaks_df = peaks_df[['chr', 'start', 'end', 'value']].reset_index()
 
 
         motifs_df = pd.concat([
-            pd.read_csv(motif.path, sep='\t', compression='gzip')
-            for motif in motifs
+            pd.read_csv(artifact.path, sep='\t', compression='gzip')
+            for artifact in motifs
         ])
         motifs_df = motifs_df[motifs_df.sequence_name.isin(self.chroms)]
         motifs_df = (
@@ -365,7 +371,7 @@ class DataPipeline(DataConfig):
 
         negatives_df = l_pr.join(r_pr, suffix='_r', slack=HICDIFFUSION_WINDOW_SIZE * 2).as_df()
         negatives_df['len_full'] = (negatives_df.End_r - negatives_df.Start)
-        negatives_df = negatives_df.query('len_full > 0 & len_full < @HICDIFFUSION_WINDOW_BP').reset_index(drop=True)
+        negatives_df = negatives_df.query('len_full > 0 & len_full < @HICDIFFUSION_WINDOW_SIZE').reset_index(drop=True)
         logger.info('Generated %d negative pairs', len(negatives_df))
         
         pairs_filtered_df = pairs_df[pairs_df.pair_index.isin(anchors_filtered_pr.pair_index)]
@@ -408,7 +414,7 @@ class DataPipeline(DataConfig):
     
 
     @_wandb_run(job_type=JobType.DATA_GENERATION)
-    def fimo(self, run: Run | None, motif: str = 'MA0139.2.meme:v0', sequence: str = 'GRCh38-reference-genome:v0'):
+    def fimo(self, run: Run | None, motif: str | Artifact = 'MA0139.2.meme:v0', sequence: str | Artifact = 'GRCh38-reference-genome:v0'):
         motif = self._get_artifact(motif, run)
         sequence = self._get_artifact(sequence, run)
         filename = 'fimo_' + motif.path_no_suffix.name + '_' + sequence.path_no_suffix.name + '.tsv.gz'
@@ -424,7 +430,7 @@ class DataPipeline(DataConfig):
         )
 
     @_wandb_run(job_type=JobType.DATA_GENERATION)
-    def vcf_consensus(self, run: Run | None, variants: str, reference: str = 'GRCh38-reference-genome:v0'):
+    def vcf_consensus(self, run: Run | None, variants: str | Artifact, reference: str | Artifact = 'GRCh38-reference-genome:v0'):
         reference = self._get_artifact(reference, run)
         variants = self._get_artifact(variants, run)
         self.tabix(variants)
@@ -446,7 +452,7 @@ class DataPipeline(DataConfig):
         return f'{self.tools_exec} tabix -fp vcf {vcfgz!r}'
 
     @_wandb_run(job_type=JobType.DATA_GENERATION)
-    def delly_call(self, run: Run | None, alignments: str, reference: str = 'GRCh38-reference-genome:v0'):
+    def delly_call(self, run: Run | None, alignments: str | Artifact, reference: str | Artifact = 'GRCh38-reference-genome:v0'):
         reference = self._get_artifact(reference, run)
         alignments = self._get_artifact(alignments, run)
 
