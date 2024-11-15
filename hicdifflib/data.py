@@ -1,4 +1,5 @@
 import logging
+import os
 from os import PathLike
 from math import floor
 from typing import Any
@@ -13,7 +14,7 @@ from fire import Fire
 from dataclasses_json import dataclass_json
 from pyranges import PyRanges
 from Bio import SeqIO
-from tqdm import trange
+from tqdm import trange, tqdm
 
 import pandas as pd
 import wandb
@@ -21,7 +22,7 @@ from wandb.sdk.wandb_run import Run
 
 import torch
 from torch.utils.data import Dataset
-from transformers import PreTrainedTokenizer
+from transformers import PreTrainedTokenizer, AutoTokenizer
 
 from hicdifflib.utils import read_paired_ends, sequence_to_onehot, sequences_mask, bstr
 from hicdifflib.hicdiffusion import HICDIFFUSION_WINDOW_SIZE, HICDIFFUSION_OUTPUT_SIZE
@@ -82,7 +83,7 @@ class LocalArtifact(Artifact):
 
 
 class WandbArtifact(Artifact):
-    def __init__(self, name: str, config: DataConfig, run: Run | None) -> None:
+    def __init__(self, name: str, config: DataConfig, run: Run | None = None) -> None:
         self._artifact: wandb.Artifact = (
             run.use_artifact(name) if run else config._api.artifact(name)
         )
@@ -90,9 +91,10 @@ class WandbArtifact(Artifact):
             root=config.data_root,
             skip_cache=config.skip_cache,
         )
+        self._entry_path = list(self._artifact.manifest.entries.values()).pop().path
     
     def __str__(self) -> str:
-        return self._artifact.file(self._root_dir)
+        return os.path.join(self._root_dir, self._entry_path)
 
 
 def _wandb_run(**wandb_kwargs):
@@ -166,7 +168,10 @@ class DataPipeline(DataConfig):
     def test_pairs_dataset(self, pet_pairs: list[str | Artifact], sequences: list[str | Artifact]):
         pairs = self._get_artifact(pet_pairs).path
         sequences = [self._get_artifact(fasta).path for fasta in sequences]
-        dataset = PairedEndsDataset(pairs=pairs, sequences=sequences, chroms=self.chroms)
+        dataset = PairedEndsDataset(
+            pairs=pairs, sequences=sequences, chroms=self.chroms, 
+            tokenizer=AutoTokenizer.from_pretrained("m10an/DNABERT-S", trust_remote_code=True)
+        )
         for i in trange(len(dataset)):
             for context_offset in (0, 0.5, 1):
                 data = dataset.get_pair_context(i, context_offset)
@@ -200,7 +205,7 @@ class DataPipeline(DataConfig):
         anchor_peak_min_overlap: int = 500,
     ):
         if self.wandb:
-            run.log({
+            run.config.update({
                 'peak_strand_slack': peak_strand_slack,
                 'min_strand_ratio': min_strand_ratio,
                 'anchor_peak_slack': anchor_peak_slack,
@@ -531,8 +536,18 @@ class PairedEndsDataset(Dataset):
         chroms: list[str],
         mask_size: int = HICDIFFUSION_OUTPUT_SIZE,
         tokenizer: PreTrainedTokenizer | None = None,
-        center_context: bool = False
+        center_context: bool = False,
+        min_length_match: float = 0.95,
+        max_anchor_length: int = 512,
+        progress_bar: bool = True,
     ) -> None:
+        self._tokenizer = tokenizer
+        self.mask_size = mask_size
+        self.center_context = center_context
+        self.min_length_match = min_length_match
+        self.max_anchor_length = max_anchor_length
+        self.progress_bar = progress_bar
+        
         self._logger = logging.getLogger(self.__class__.__name__)
         self._pairs_df = (
             pd.read_csv(pairs)
@@ -540,23 +555,31 @@ class PairedEndsDataset(Dataset):
         )
         self._pairs_df['label'] = (self._pairs_df['pet_counts'] > 0).astype(int)
         self._sequences = self._load_sequences(sequences, chroms)
-        self._tokenizer = tokenizer
 
         self._logger.info("Validating sequences (%d pairs)", len(self._pairs_df))
         self._valid_sequences = []
-        for pair_idx in self._pairs_df.index:
+        for pair_idx in tqdm(self._pairs_df.index, disable=not self.progress_bar, ):
             self._valid_sequences += self._check_pair_sequences(pair_idx)
         self._logger.info("%d valid sequences", len(self._valid_sequences))
-        self.mask_size = mask_size
-        self.center_context = center_context
 
     def _load_sequences(self, sequensces: list[Path], chroms: list[str]) -> dict:
         result = defaultdict(list)
-        for seq_path in sequensces:
+        def _reference_match(record):
+            ref_len = len(result[record.id][0])
+            rec_len = len(record)
+            return min(ref_len / rec_len, rec_len / ref_len)
+        
+        for seq_idx, seq_path in enumerate(sequensces):
             with open(seq_path) as f:
                 records = SeqIO.parse(f, 'fasta')
                 for record in records:
                     if record.id not in chroms:
+                        continue
+                    if seq_idx > 0 and (match := _reference_match(record)) < self.min_length_match:
+                        self._logger.info(
+                            "Skipping '%s' from '%s' (%s), (%d%% match with reference)", 
+                            record.id, seq_path.name, bstr(len(record.seq)), round(100*match)
+                        )
                         continue
                     result[record.id].append(record.seq)
                     self._logger.info("Loaded '%s' from '%s' (%s)", record.id, seq_path.name, bstr(len(record.seq)))
@@ -571,6 +594,12 @@ class PairedEndsDataset(Dataset):
         for seq_idx, seq in enumerate(self._sequences[row.chr]):
             # check if any index is higher than a sequence
             if any(x >= len(seq) for x in [row.start_l, row.end_l - 1, row.start_r, row.end_r - 1]):
+                continue
+
+            if self._tokenizer and any(
+                len(self._tokenizer.tokenize(str(seq[anchor]))) > self.max_anchor_length 
+                for anchor in [slice(row.start_l, row.end_l), slice(row.start_r, row.end_r)]
+            ):
                 continue
             
             # bound possible range of window positions which includes both anchors
