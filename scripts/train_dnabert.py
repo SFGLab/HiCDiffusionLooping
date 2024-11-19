@@ -31,27 +31,34 @@ def main(run):
     # train_chroms = ['chr1']
     train_chroms = [f'chr{i}' for i in range(1, 23) if f'chr{i}' not in (test_chroms+eval_chroms)]
     training_args = TrainingArguments(
-        output_dir="/mnt/evafs/scratch/shared/imialeshka/hicdata/test",
-        num_train_epochs=2,
-        eval_strategy='steps',
-        eval_steps=1000,
+        output_dir="/mnt/evafs/scratch/shared/imialeshka/hicdata/test2",
+        num_train_epochs=10,
+        evaluation_strategy='steps',
+        eval_steps=10000,
         eval_delay=0,
         save_strategy='steps',
-        save_steps=1000,
+        save_steps=10000,
         logging_strategy='steps',
         logging_steps=10,
-        auto_find_batch_size=True,
-        # per_device_train_batch_size=2,
-        # per_device_eval_batch_size=2,
+        auto_find_batch_size=False,
+        per_device_eval_batch_size=8,
+        per_device_train_batch_size=8,
         run_name='dnabert',
-        disable_tqdm=True,
+        disable_tqdm=False,
         dataloader_num_workers=8,
         metric_for_best_model='f1',
         greater_is_better=True,
     )
-
+        
     data_config = DataConfig(data_root='/mnt/evafs/scratch/shared/imialeshka/hicdata/')
+    config = PairEncoderConfig(
+        anchor_encoder_shared=True,
+        hicdiffusion_frozen=False,
+        hicdiffusion_checkpoint=str(WandbArtifact('hicdiffusion_encoder_decoder:v0', data_config))
+    )
     tokenizer = AutoTokenizer.from_pretrained("m10an/DNABERT-S", trust_remote_code=True)
+    model = PairEncoderForClassification(config).cuda()
+
     common = dict(
         pairs=WandbArtifact('pet_pairs.csv:v1', data_config, run).path,
         sequences=[
@@ -62,6 +69,7 @@ def main(run):
         tokenizer=tokenizer,
         min_length_match=0.95,
         progress_bar=False,
+        # max_anchor_length=510,
     )
     
     
@@ -75,12 +83,6 @@ def main(run):
         **common
     )
     
-    config = PairEncoderConfig(
-        anchor_encoder_shared=True,
-        hicdiffusion_checkpoint=str(WandbArtifact('hicdiffusion_encoder_decoder:v0', data_config))
-    )
-    model = PairEncoderForClassification(config).cuda()
-
     trainer = CustomTrainer(
         model=model,
         data_collator=PairedEndsCollatorWithPadding(tokenizer),

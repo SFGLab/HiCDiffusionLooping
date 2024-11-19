@@ -14,6 +14,7 @@ class PairEncoderConfig(PretrainedConfig):
     def __init__(
         self,
         hicdiffusion_checkpoint: str | None = None,
+        hicdiffusion_frozen: bool = True,
         anchor_encoder: str = "m10an/DNABERT-S",
         anchor_encoder_shared: bool = False,
         hidden_size: int = 768,
@@ -31,6 +32,7 @@ class PairEncoderConfig(PretrainedConfig):
             if classifier_dropout is None else
             classifier_dropout
         )
+        self.hicdiffusion_frozen = hicdiffusion_frozen
         super().__init__(**kwargs)
 
 
@@ -79,8 +81,9 @@ class PairEncoderModel(PreTrainedModel):
             ),
             checkpoint=config.hicdiffusion_checkpoint
         )
-        self._freeze_model(self.context_model.model.encoder)
-        self._freeze_model(self.context_model.model.decoder)
+        if config.hicdiffusion_frozen:
+            self._freeze_model(self.context_model.model.encoder)
+            self._freeze_model(self.context_model.model.decoder)
         self.final = nn.Sequential(nn.Linear(config.hidden_size*3, config.hidden_size), nn.ReLU())
 
     def forward(
