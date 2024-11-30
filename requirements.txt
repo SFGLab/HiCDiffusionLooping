@@ -3,3 +3,4 @@ fire
 dataclasses-json
 transformers==4.27
 torchtyping
+requests

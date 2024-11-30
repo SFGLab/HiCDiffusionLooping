@@ -540,6 +540,8 @@ class PairedEndsDataset(Dataset):
         min_length_match: float = 0.95,
         max_anchor_length: int = 512,
         progress_bar: bool = True,
+        positive_min_pet_counts: int = 1,
+        negative_max_pet_counts: int = 0,
     ) -> None:
         self._tokenizer = tokenizer
         self.mask_size = mask_size
@@ -547,15 +549,28 @@ class PairedEndsDataset(Dataset):
         self.min_length_match = min_length_match
         self.max_anchor_length = max_anchor_length
         self.progress_bar = progress_bar
+
+        if positive_min_pet_counts <= negative_max_pet_counts:
+            raise ValueError(
+                f'Labels therhold are intesecting: '
+                f'{positive_min_pet_counts} <= {negative_max_pet_counts:}'
+            )
         
         self._logger = logging.getLogger(self.__class__.__name__)
         self._pairs_df = (
             pd.read_csv(pairs)
             .query('chr.isin(@chroms)')
         )
-        self._pairs_df['label'] = (self._pairs_df['pet_counts'] > 0).astype(int)
-        self._sequences = self._load_sequences(sequences, chroms)
+        self._pairs_df['label'] = (self._pairs_df['pet_counts'] >= positive_min_pet_counts).astype(int)
+        margin_labels =(
+            (self._pairs_df['pet_counts'] < positive_min_pet_counts) &
+            (self._pairs_df['pet_counts'] > negative_max_pet_counts)
+        )
+        self._logger.info("thesholded %d margin pairs", sum(margin_labels))
+        self._pairs_df = self._pairs_df.loc[~margin_labels, :]
+        self._logger.info("positives: %s%%", 100 * sum(self._pairs_df['label']) / len(self._pairs_df))
 
+        self._sequences = self._load_sequences(sequences, chroms)
         self._logger.info("Validating sequences (%d pairs)", len(self._pairs_df))
         self._valid_sequences = []
         for pair_idx in tqdm(self._pairs_df.index, disable=not self.progress_bar, ):
