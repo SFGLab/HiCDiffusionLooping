@@ -14,7 +14,7 @@ from transformers.models.bert.configuration_bert import BertConfig
 from hicdifflib.data import PairedEndsDataset, DataConfig, WandbArtifact
 from hicdifflib.dnabert import PairEncoderConfig, PairEncoderForClassification
 from hicdifflib.hicdiffusion import HICDIFFUSION_WINDOW_SIZE
-from hicdifflib.nn import PairedEndsCollatorWithPadding, make_weights_for_balanced_classes, CustomTrainer
+from hicdifflib.nn import PairedEndsCollatorWithPadding, make_weights_for_balanced_classes, CustomTrainer, compute_metrics
 
 
 logger = logging.getLogger(__name__)
