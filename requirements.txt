@@ -1,6 +1,6 @@
 -r submodule/HiCDiffusion/requirements.txt
 fire
 dataclasses-json
-transformers==4.27
+transformers==4.46.3
 torchtyping
 requests

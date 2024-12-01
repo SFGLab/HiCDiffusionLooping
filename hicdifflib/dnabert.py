@@ -17,6 +17,7 @@ class PairEncoderConfig(PretrainedConfig):
         hicdiffusion_frozen: bool = True,
         anchor_encoder: str = "m10an/DNABERT-S",
         anchor_encoder_shared: bool = False,
+        anchor_encoder_frozen: bool = True,
         hidden_size: int = 768,
         hidden_dropout: float = 0.1,
         classifier_dropout: float | None = None,
@@ -24,6 +25,7 @@ class PairEncoderConfig(PretrainedConfig):
     ):
         self.anchor_encoder = anchor_encoder
         self.anchor_encoder_shared = anchor_encoder_shared
+        self.anchor_encoder_frozen = anchor_encoder_frozen
         self.hicdiffusion_checkpoint = hicdiffusion_checkpoint
         self.hidden_size = hidden_size
         self.hidden_dropout = hidden_dropout
@@ -55,7 +57,8 @@ class PairEncoderModel(PreTrainedModel):
 
     def _anchor_encoder(self, config):
         model = AutoModel.from_pretrained(config.anchor_encoder, trust_remote_code=True)
-        self._freeze_model(model)
+        if config.anchor_encoder_frozen:
+            self._freeze_model(model)
         return MeanPoolingEncoder(model)
 
 

@@ -2,6 +2,7 @@ import os
 import logging
 
 import wandb
+import torch.nn as nn
 from torch.utils.data import Subset
 from transformers import AutoTokenizer
 from transformers import TrainingArguments
@@ -40,6 +41,9 @@ def main(run):
     data_config = DataConfig(data_root='/mnt/evafs/scratch/shared/imialeshka/hicdata/')
     training_args = TrainingArguments(
         output_dir=f"/mnt/evafs/scratch/shared/imialeshka/hicdata/{RUN_NAME}",
+        lr_scheduler_type='reduce_lr_on_plateau',
+        lr_scheduler_kwargs=dict(mode='max', factor=0.5, patience=1),
+        warmup_steps=10000,
         num_train_epochs=10,
         evaluation_strategy='steps',
         eval_steps=10000,
@@ -74,7 +78,7 @@ def main(run):
     )
     config_kwargs = dict(
         anchor_encoder_shared=True,
-        hicdiffusion_frozen=False,
+        hicdiffusion_frozen=True,
     )
     run.config.update(config_kwargs)
     
@@ -108,6 +112,8 @@ def main(run):
         eval_dataset=eval_dataset if not DEBUG else Subset(eval_dataset, list(range(10))),
         compute_metrics=compute_metrics
     )
+    run.config['trainer_type'] = str(trainer.__class__.__name__)
+    run.config['loss_type'] = str(nn.BCEWithLogitsLoss.__class__.__name__)
     
     trainer.train()
 
