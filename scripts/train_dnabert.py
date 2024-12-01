@@ -1,38 +1,45 @@
 import os
 import logging
-from pathlib import Path
 
 import wandb
-import numpy as np
-
-import torch
-import torch.nn as nn
-from transformers import AutoModel, AutoTokenizer
-from transformers import TrainingArguments, Trainer
-from transformers.models.bert.configuration_bert import BertConfig
+from torch.utils.data import Subset
+from transformers import AutoTokenizer
+from transformers import TrainingArguments
 
 from hicdifflib.data import PairedEndsDataset, DataConfig, WandbArtifact
 from hicdifflib.dnabert import PairEncoderConfig, PairEncoderForClassification
-from hicdifflib.hicdiffusion import HICDIFFUSION_WINDOW_SIZE
-from hicdifflib.nn import PairedEndsCollatorWithPadding, make_weights_for_balanced_classes, CustomTrainer, compute_metrics
+from hicdifflib.metrics import compute_metrics
+from hicdifflib.nn import PairedEndsCollatorWithPadding, BalancedTrainer
 
 
 logger = logging.getLogger(__name__)
+
+
+DEBUG=False
+RUN_NAME='dnabert'
+
+if DEBUG:
+    RUN_NAME += '_debug'
+
 run_config = dict(
     save_code=True, 
-    job_type='train',
+    job_type='train' if not DEBUG else 'debug',
     project='HiCDiffusionLooping',
-    name="train_dnabert",
-    group="dnabert",
+    name=f"train_{RUN_NAME}",
+    group=RUN_NAME,
 )
 
 def main(run):
     test_chroms = ['chr14']
     eval_chroms = ['chr15']
-    # train_chroms = ['chr1']
     train_chroms = [f'chr{i}' for i in range(1, 23) if f'chr{i}' not in (test_chroms+eval_chroms)]
+    if DEBUG:
+        train_chroms = train_chroms[:1]
+    
+    tokenizer = AutoTokenizer.from_pretrained("m10an/DNABERT-S", trust_remote_code=True)
+    data_config = DataConfig(data_root='/mnt/evafs/scratch/shared/imialeshka/hicdata/')
     training_args = TrainingArguments(
-        output_dir="/mnt/evafs/scratch/shared/imialeshka/hicdata/test3",
+        output_dir=f"/mnt/evafs/scratch/shared/imialeshka/hicdata/{RUN_NAME}",
         num_train_epochs=10,
         evaluation_strategy='steps',
         eval_steps=10000,
@@ -44,33 +51,14 @@ def main(run):
         auto_find_batch_size=True,
         # per_device_eval_batch_size=8,
         # per_device_train_batch_size=8,
-        run_name='dnabert',
+        run_name=RUN_NAME,
         disable_tqdm=False,
         dataloader_num_workers=8,
         metric_for_best_model='average_precision',
         greater_is_better=True,
     )
-    
-    for key, value in os.environ.items():
-        if key.startswith('SLURM_'):
-            run.config[key] = value
-    
-    data_config = DataConfig(data_root='/mnt/evafs/scratch/shared/imialeshka/hicdata/')
-    config_kwargs = dict(
-        anchor_encoder_shared=True,
-        hicdiffusion_frozen=False,
-    )
-    config = PairEncoderConfig(
-        **config_kwargs,
-        hicdiffusion_checkpoint=str(WandbArtifact('hicdiffusion_encoder_decoder:v0', data_config))
-    )
-    for key, value in config_kwargs.items():
-        run.config[key] = value
 
-    tokenizer = AutoTokenizer.from_pretrained("m10an/DNABERT-S", trust_remote_code=True)
-    model = PairEncoderForClassification(config).cuda()
-
-    common = dict(
+    dataset_kwargs = dict(
         pairs=WandbArtifact('pet_pairs.csv:v1', data_config, run).path,
         sequences=[
             WandbArtifact('GRCh38-reference-genome:v0', data_config, run).path,
@@ -84,32 +72,44 @@ def main(run):
         negative_max_pet_counts=0,
         max_anchor_length=510,
     )
-    for key, value in common.items():
+    config_kwargs = dict(
+        anchor_encoder_shared=True,
+        hicdiffusion_frozen=False,
+    )
+    run.config.update(config_kwargs)
+    
+    for key, value in os.environ.items():
+        if key.startswith('SLURM_'):
+            run.config[key] = value
+    
+    for key, value in dataset_kwargs.items():
         if isinstance(value, (int, float, str)):
             run.config[key] = value    
     
     train_dataset = PairedEndsDataset(
         chroms=train_chroms,
-        **common,
+        **dataset_kwargs,
     )
     eval_dataset = PairedEndsDataset(
         chroms=eval_chroms,
         center_context=True,
-        **common
+        **dataset_kwargs
     )
-    
-    trainer = CustomTrainer(
+    config = PairEncoderConfig(
+        **config_kwargs,
+        hicdiffusion_checkpoint=str(WandbArtifact('hicdiffusion_encoder_decoder:v0', data_config))
+    )
+    model = PairEncoderForClassification(config).cuda()
+    trainer = BalancedTrainer(
         model=model,
         data_collator=PairedEndsCollatorWithPadding(tokenizer),
         args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        # train_dataset=torch.utils.data.Subset(train_dataset, list(range(10))),
-        # eval_dataset=torch.utils.data.Subset(eval_dataset, list(range(10))),
+        train_dataset=train_dataset if not DEBUG else Subset(train_dataset, list(range(10))),
+        eval_dataset=eval_dataset if not DEBUG else Subset(eval_dataset, list(range(10))),
         compute_metrics=compute_metrics
     )
-
-    res = trainer.train()
+    
+    trainer.train()
 
 
 if __name__ == '__main__':

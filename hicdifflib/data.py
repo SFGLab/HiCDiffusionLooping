@@ -603,6 +603,12 @@ class PairedEndsDataset(Dataset):
     def __len__(self):
         return len(self._valid_sequences)
 
+    def get_labels(self) -> list[int]:
+        return [
+            int(self._pairs_df.loc[x['pair_idx'], 'label'])
+            for x in self._valid_sequences
+        ]
+
     def _check_pair_sequences(self, pair_idx: int) -> list[dict]:
         row = self._pairs_df.loc[pair_idx]
         result = []

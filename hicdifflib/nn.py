@@ -1,21 +1,13 @@
 import logging
-from pathlib import Path
-
-import wandb
-import numpy as np
 
 import torch
-import torch.nn as nn
 from torch.utils.data import WeightedRandomSampler
-from transformers import AutoModel, AutoTokenizer
-from transformers import TrainingArguments, Trainer, DataCollatorWithPadding
-from transformers.models.bert.configuration_bert import BertConfig
-from sklearn.metrics import precision_score, recall_score, f1_score, roc_auc_score, average_precision_score
+from transformers import Trainer
 
-from hicdifflib.data import PairedEndsDataset, DataConfig, WandbArtifact
-from hicdifflib.dnabert import PairEncoderConfig, PairEncoderForClassification
-from hicdifflib.hicdiffusion import HICDIFFUSION_WINDOW_SIZE
+from hicdifflib.data import PairedEndsDataset
 
+
+logger = logging.getLogger(__name__)
 
 class PairedEndsCollatorWithPadding:
     def __init__(self, tokenizer):
@@ -47,49 +39,6 @@ class PairedEndsCollatorWithPadding:
         }
         return batch
 
-def compute_metrics(eval_pred):
-    logits, labels = eval_pred
-    probabilities = 1 / (1 + np.exp(-logits[:, 0]))
-    predictions = (probabilities >= 0.5).astype(int)
-
-    try:
-        precision = precision_score(labels, predictions)
-    except Exception as e:
-        precision = np.nan
-        logger.warning(str(e))
-    
-    try:
-        recall = recall_score(labels, predictions)
-    except Exception as e:
-        recall = np.nan
-        logger.warning(str(e))
-    
-    try:
-        f1 = f1_score(labels, predictions)
-    except Exception as e:
-        f1 = np.nan
-        logger.warning(str(e))
-    
-    try:
-        roc_auc = roc_auc_score(labels, probabilities)
-    except Exception as e:
-        roc_auc = np.nan
-        logger.warning(str(e))
-    
-    try:
-        pr_auc = average_precision_score(labels, probabilities)
-    except Exception as e:
-        pr_auc = np.nan
-        logger.warning(str(e))
-    
-    return {
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
-        "roc_auc": roc_auc,
-        "average_precision": pr_auc
-    }
-
 
 def make_weights_for_balanced_classes(labels, nclasses):                        
     count = [0] * nclasses                                                      
@@ -104,10 +53,11 @@ def make_weights_for_balanced_classes(labels, nclasses):
         weight[idx] = weight_per_class[label]                                  
     return weight
 
-class CustomTrainer(Trainer):
+
+class BalancedTrainer(Trainer):
     def _get_train_sampler(self):
         self.train_dataset: PairedEndsDataset
-        labels = [int(self.train_dataset._pairs_df.loc[x['pair_idx'], 'label']) for x in self.train_dataset._valid_sequences]
+        labels = self.train_dataset.get_labels()
         return WeightedRandomSampler(
             weights=make_weights_for_balanced_classes(labels, 2),
             num_samples=int(sum(labels) * 2),
