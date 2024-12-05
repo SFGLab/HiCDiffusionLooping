@@ -60,15 +60,12 @@ class PairEncoderModel(PreTrainedModel):
         if config.anchor_encoder_frozen:
             self._freeze_model(model)
         return MeanPoolingEncoder(model)
-
-
-    def __init__(self, config: PairEncoderConfig):
-        super().__init__(config)
-        self.left_model = self._anchor_encoder(config)
-        self.right_model = (
-            self.left_model if config.anchor_encoder_shared else self._anchor_encoder(config)
-        )
-        self.context_model = HiCDiffusionContextEncoder(
+    
+    def _context_encoder(self, config):
+        if config.hicdiffusion_checkpoint is None:
+            return None
+        
+        model = HiCDiffusionContextEncoder(
             reduce_layer=nn.Sequential(
                 ResidualConv2d(HICDIFFUSION_OUTPUT_CHANNELS + 1, 256, 3, 1, 1), 
                 ResidualConv2d(256, 128, 3, 1, 1), 
@@ -84,10 +81,28 @@ class PairEncoderModel(PreTrainedModel):
             ),
             checkpoint=config.hicdiffusion_checkpoint
         )
+        
         if config.hicdiffusion_frozen:
-            self._freeze_model(self.context_model.model.encoder)
-            self._freeze_model(self.context_model.model.decoder)
-        self.final = nn.Sequential(nn.Linear(config.hidden_size*3, config.hidden_size), nn.ReLU())
+            self._freeze_model(model.model.encoder)
+            self._freeze_model(model.model.decoder)
+            
+        return model
+
+    def __init__(self, config: PairEncoderConfig):
+        super().__init__(config)
+        self.left_model = self._anchor_encoder(config)
+        self.right_model = (
+            self.left_model if config.anchor_encoder_shared else self._anchor_encoder(config)
+        )
+        self.context_model = self._context_encoder(config)
+        self.use_context_features = self.context_model is not None
+        self.final = nn.Sequential(
+            nn.Linear(
+                in_features=config.hidden_size * (2 + self.use_context_features), 
+                out_features=config.hidden_size
+            ), 
+            nn.ReLU()
+        )
 
     def forward(
         self, 
@@ -106,8 +121,13 @@ class PairEncoderModel(PreTrainedModel):
             input_ids=right_input_ids,
             attention_mask=right_attention_mask,
         )
-        context_hidden = self.context_model(context_sequence, context_mask)
-        x = torch.cat([left_hidden, right_hidden, context_hidden], dim=1)
+        
+        if self.use_context_features:
+            context_hidden = self.context_model(context_sequence, context_mask)
+            x = torch.cat([left_hidden, right_hidden, context_hidden], dim=1)
+        else:
+            x = torch.cat([left_hidden, right_hidden], dim=1)
+        
         x = self.final(x)
         return x
 
