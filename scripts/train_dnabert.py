@@ -7,10 +7,12 @@ from torch.utils.data import Subset
 from transformers import AutoTokenizer
 from transformers import TrainingArguments
 
-from hicdifflib.data import PairedEndsDataset, DataConfig, WandbArtifact
+from hicdifflib.data.base import DataConfig, WandbArtifact
+from hicdifflib.data.collator import PairedEndsCollatorWithPadding
+from hicdifflib.data.dataset import PairedEndsDataset
 from hicdifflib.dnabert import PairEncoderConfig, PairEncoderForClassification
 from hicdifflib.metrics import compute_metrics
-from hicdifflib.nn import PairedEndsCollatorWithPadding, BalancedTrainer
+from hicdifflib.trainer import BalancedTrainer
 
 
 logger = logging.getLogger(__name__)
