@@ -38,7 +38,7 @@ class DataConfig:
 
 
 class DataPipeline(DataConfig):
-    @BasePipeline._wandb_run(job_type=JobType.DATA_GENERATION)
+    @wandb_run(job_type=JobType.DATA_GENERATION)
     def pet_pairs(
         self,
         run: Run | None,
@@ -160,6 +160,50 @@ class DataPipeline(DataConfig):
     def _exec_tabix(self, vcfgz: str):
         return f'{self.tools_exec} tabix -fp vcf {vcfgz!r}'
     
+    
+    ##################### bcftools consensus #######################################################
+    
+    @wandb_run(job_type=JobType.DATA_GENERATION)
+    def bcftools_consensus(self, run: Run | None, variants: str | Artifact, reference: str | Artifact = 'GRCh38-reference-genome:v0'):
+        reference = self._get_artifact(reference, run)
+        variants = self._get_artifact(variants, run)
+        self.bcftools_index(variants)
+        consensus = variants.path.with_suffix('.fa')
+        self._exec_bcftools_consesus(reference, self.chroms, variants, consensus, output_check=consensus)
+        self._log_artifact(run, consensus)
+    
+    @simple_exec_and_log
+    def _exec_bcftools_consesus(self, fasta: str, regions: list[str], vcf: str, output: str):
+        regions = ' '.join([repr(r) for r in regions])
+        return f'{self.samtools_exec} faidx {fasta!r} {regions} | {self.tools_exec} bcftools consensus {vcf!r} > {output!r}'
+    
+    def bcftools_index(self, variants: str | Artifact):
+        variants = self._get_artifact(variants)
+        self._exec_bcftools_index(variants, output_check=variants.path.with_suffix('.gz.csi'))
+        
+    @simple_exec_and_log
+    def _exec_bcftools_index(self, vcfgz: str):
+        return f'{self.tools_exec} bcftools index {vcfgz!r}'
+    
+    
+    ##################### bcftools call ############################################################
+    
+    @wandb_run(job_type=JobType.DATA_GENERATION)
+    def bcftools_call(self, run: Run | None, alignments: str | Artifact, reference: str | Artifact = 'GRCh38-reference-genome:v0'):
+        reference = self._get_artifact(reference, run)
+        alignments = self._get_artifact(alignments, run)
+        
+        self.index_reference(reference)
+        alignments_sorted = self.sort_alignments(alignments)
+        self.index_alignments(alignments_sorted)
+        
+        bcf_vcf = alignments.path.with_suffix('.bcf.vcf.gz')
+        self._exec_bcftools_call(reference, alignments_sorted, bcf_vcf)
+        self._log_artifact(run, bcf_vcf)
+        
+    @simple_exec_and_log
+    def _exec_bcftools_call(self, fasta: str, bam: str, output: str):
+        return f'{self.tools_exec} bcftools mpileup -Ou -f {fasta!r} {bam!r} | {self.tools_exec} bcftools call -mv -Oz -o {output!r}'
     
     ##################### delly call ###############################################################
 
