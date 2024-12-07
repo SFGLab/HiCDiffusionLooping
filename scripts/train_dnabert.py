@@ -1,4 +1,5 @@
 import os
+import sys
 import logging
 
 import wandb
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 DEBUG=False
-RUN_NAME='dnabert'
+RUN_NAME=sys.argv[1]
 
 if DEBUG:
     RUN_NAME += '_debug'
@@ -43,17 +44,15 @@ def main(run):
     data_config = DataConfig(data_root='/mnt/evafs/scratch/shared/imialeshka/hicdata/')
     training_args = TrainingArguments(
         output_dir=f"/mnt/evafs/scratch/shared/imialeshka/hicdata/{RUN_NAME}",
-        lr_scheduler_type='reduce_lr_on_plateau',
-        lr_scheduler_kwargs=dict(mode='max', factor=0.5, patience=1),
-        warmup_steps=10000,
-        num_train_epochs=10,
+        warmup_steps=10_000,
+        num_train_epochs=20,
         evaluation_strategy='steps',
-        eval_steps=10000,
+        eval_steps=10_000,
         eval_delay=0,
         save_strategy='steps',
-        save_steps=10000,
+        save_steps=10_000,
         logging_strategy='steps',
-        logging_steps=10,
+        logging_steps=1,
         auto_find_batch_size=True,
         # per_device_eval_batch_size=8,
         # per_device_train_batch_size=8,
@@ -81,6 +80,8 @@ def main(run):
     config_kwargs = dict(
         anchor_encoder_shared=True,
         hicdiffusion_frozen=True,
+        hicdiffusion_checkpoint=str(WandbArtifact('hicdiffusion_encoder_decoder:v0', data_config))
+        # hicdiffusion_checkpoint=None,
     )
     run.config.update(config_kwargs)
     
@@ -101,10 +102,7 @@ def main(run):
         center_context=True,
         **dataset_kwargs
     )
-    config = PairEncoderConfig(
-        **config_kwargs,
-        hicdiffusion_checkpoint=str(WandbArtifact('hicdiffusion_encoder_decoder:v0', data_config))
-    )
+    config = PairEncoderConfig(**config_kwargs)
     model = PairEncoderForClassification(config).cuda()
     trainer = BalancedTrainer(
         model=model,
@@ -115,7 +113,7 @@ def main(run):
         compute_metrics=compute_metrics
     )
     run.config['trainer_type'] = str(trainer.__class__.__name__)
-    run.config['loss_type'] = str(nn.BCEWithLogitsLoss.__class__.__name__)
+    run.config['loss_type'] = str(nn.BCEWithLogitsLoss.__name__)
     
     trainer.train()
 
