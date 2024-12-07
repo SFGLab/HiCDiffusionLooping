@@ -198,12 +198,14 @@ class DataPipeline(DataConfig):
         self.index_alignments(alignments_sorted)
         
         bcf_vcf = alignments.path.with_suffix('.bcf.vcf.gz')
-        self._exec_bcftools_call(reference, alignments_sorted, bcf_vcf)
+        self._exec_bcftools_call(reference, self.chroms, alignments_sorted, bcf_vcf)
         self._log_artifact(run, bcf_vcf)
         
     @simple_exec_and_log
-    def _exec_bcftools_call(self, fasta: str, bam: str, output: str):
-        return f'{self.tools_exec} bcftools mpileup -Ou -f {fasta!r} {bam!r} | {self.tools_exec} bcftools call -mv -Oz -o {output!r}'
+    def _exec_bcftools_call(self, fasta: str, regions: list[str], bam: str, output: str):
+        regions = ','.join(regions)
+        args = '-q 0 -Q 0 --max-depth 10000 --min-MQ 0'
+        return f'{self.tools_exec} bcftools mpileup {args} -Ou -f {fasta!r} {bam!r} | {self.tools_exec} bcftools call -P 1e-2 -mv -Oz -o {output!r}'
     
     ##################### delly call ###############################################################
 
