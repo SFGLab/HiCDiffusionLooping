@@ -106,19 +106,19 @@ class PairEncoderModel(PreTrainedModel):
 
     def forward(
         self, 
-        left_input_ids: _Tensor['batch', 'sequence'],
-        right_input_ids: _Tensor['batch', 'sequence'],
+        left_sequence: _Tensor['batch', 'sequence'],
+        right_sequence: _Tensor['batch', 'sequence'],
         context_sequence: _Tensor['batch', 'onehot', 'sequence'],
         context_mask: _Tensor['batch', 'w', 'h'],
         left_attention_mask: _Tensor['batch', 'sequence'] | None = None,
         right_attention_mask: _Tensor['batch', 'sequence'] | None = None,
     ):
         left_hidden = self.left_model(
-            input_ids=left_input_ids,
+            input_ids=left_sequence,
             attention_mask=left_attention_mask,
         )
         right_hidden = self.right_model(
-            input_ids=right_input_ids,
+            input_ids=right_sequence,
             attention_mask=right_attention_mask,
         )
         

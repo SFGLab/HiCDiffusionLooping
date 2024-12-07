@@ -172,11 +172,13 @@ class PairedEndsDataset(Dataset):
     ) -> dict:
         inputs = self.get_pair_context(i, context_offset)
 
-        if self._tokenizer and tokenize:
-            left = self._tokenizer(text=str(inputs['anchor_l']), return_tensors=return_tensors)
-            right = self._tokenizer(text=str(inputs['anchor_r']), return_tensors=return_tensors)
-            inputs['left_input_ids'] = left['input_ids']
-            inputs['right_input_ids'] = right['input_ids']
+        # left = str(inputs['anchor_l'])
+        # right = str(inputs['anchor_r'])
+        # if self._tokenizer and tokenize:
+        #     left = self._tokenizer(text=left, return_tensors=return_tensors)['input_ids']
+        #     right = self._tokenizer(text=right, return_tensors=return_tensors)['input_ids']
+        inputs['left_sequence'] = str(inputs['anchor_l'])
+        inputs['right_sequence'] = str(inputs['anchor_r'])
 
         inputs['context_sequence'] = torch.unsqueeze(
             input=sequence_to_onehot(str(inputs['context'])),
