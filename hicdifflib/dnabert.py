@@ -143,8 +143,8 @@ class PairEncoderForClassification(PreTrainedModel):
 
     def forward(
         self, 
-        left_input_ids: _Tensor['batch', 'sequence'],
-        right_input_ids: _Tensor['batch', 'sequence'],
+        left_sequence: _Tensor['batch', 'sequence'],
+        right_sequence: _Tensor['batch', 'sequence'],
         context_sequence: _Tensor['batch', 'onehot', 'sequence'],
         context_mask: _Tensor['batch', 'w', 'h'],
         labels: _Tensor['batch', 'label'] | None = None,
@@ -152,8 +152,8 @@ class PairEncoderForClassification(PreTrainedModel):
         right_attention_mask: _Tensor['batch', 'sequence'] | None = None,
     ):
         x = self.encoder(
-            left_input_ids=left_input_ids,
-            right_input_ids=right_input_ids,
+            left_sequence=left_sequence,
+            right_sequence=right_sequence,
             left_attention_mask=left_attention_mask,
             right_attention_mask=right_attention_mask,
             context_sequence=context_sequence,
