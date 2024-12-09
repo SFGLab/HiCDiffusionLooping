@@ -119,16 +119,18 @@ class PairEncoderModel(PreTrainedModel):
         left_attention_mask: _Tensor['batch', 'sequence'] | None = None,
         right_attention_mask: _Tensor['batch', 'sequence'] | None = None,
     ):
-        left_hidden = self.left_model(
-            input_ids=left_sequence,
-            attention_mask=left_attention_mask,
-        )
-        right_hidden = self.right_model(
-            input_ids=right_sequence,
-            attention_mask=right_attention_mask,
-        )
+        features = []
+        if self.use_anchor_features:
+            left_hidden = self.left_model(
+                input_ids=left_sequence,
+                attention_mask=left_attention_mask,
+            )
+            right_hidden = self.right_model(
+                input_ids=right_sequence,
+                attention_mask=right_attention_mask,
+            )
+            features.extend([left_hidden, right_hidden])
         
-        features = [left_hidden, right_hidden] if self.use_anchor_features else []
         if self.use_context_features:
             context_hidden = self.context_model(context_sequence, context_mask if self.use_context_mask else None)
             features.append(context_hidden)
