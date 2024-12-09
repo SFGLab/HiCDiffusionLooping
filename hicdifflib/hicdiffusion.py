@@ -48,10 +48,11 @@ class HiCDiffusionContextEncoder(nn.Module):
     def forward(
         self, 
         inputs: _Tensor['batch', 'onehot', 'sequence'], 
-        mask: _Tensor['batch', 1, HICDIFFUSION_OUTPUT_SIZE, HICDIFFUSION_OUTPUT_SIZE]
+        mask: _Tensor['batch', 1, HICDIFFUSION_OUTPUT_SIZE, HICDIFFUSION_OUTPUT_SIZE] | None = None
     ) -> _Tensor['batch', 'hidden']:
         x = self.model.encoder(inputs)
         x = self.model.decoder(x)
-        x = torch.cat([x, mask], dim=1)
+        if mask is not None:
+            x = torch.cat([x, mask], dim=1)
         x = self.reduce(x)
         return x

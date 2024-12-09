@@ -15,7 +15,8 @@ class PairEncoderConfig(PretrainedConfig):
         self,
         hicdiffusion_checkpoint: str | None = None,
         hicdiffusion_frozen: bool = True,
-        anchor_encoder: str = "m10an/DNABERT-S",
+        hicdiffusion_mask: bool = True,
+        anchor_encoder: str | None = "m10an/DNABERT-S",
         anchor_encoder_shared: bool = False,
         anchor_encoder_frozen: bool = True,
         hidden_size: int = 768,
@@ -26,7 +27,6 @@ class PairEncoderConfig(PretrainedConfig):
         self.anchor_encoder = anchor_encoder
         self.anchor_encoder_shared = anchor_encoder_shared
         self.anchor_encoder_frozen = anchor_encoder_frozen
-        self.hicdiffusion_checkpoint = hicdiffusion_checkpoint
         self.hidden_size = hidden_size
         self.hidden_dropout = hidden_dropout
         self.classifier_dropout = (
@@ -34,7 +34,9 @@ class PairEncoderConfig(PretrainedConfig):
             if classifier_dropout is None else
             classifier_dropout
         )
+        self.hicdiffusion_checkpoint = hicdiffusion_checkpoint
         self.hicdiffusion_frozen = hicdiffusion_frozen
+        self.hicdiffusion_mask = hicdiffusion_mask
         super().__init__(**kwargs)
 
 
@@ -56,6 +58,8 @@ class PairEncoderModel(PreTrainedModel):
             param.requires_grad = False
 
     def _anchor_encoder(self, config):
+        if config.anchor_encoder is None:
+            return None
         model = AutoModel.from_pretrained(config.anchor_encoder, trust_remote_code=True)
         if config.anchor_encoder_frozen:
             self._freeze_model(model)
@@ -67,7 +71,7 @@ class PairEncoderModel(PreTrainedModel):
         
         model = HiCDiffusionContextEncoder(
             reduce_layer=nn.Sequential(
-                ResidualConv2d(HICDIFFUSION_OUTPUT_CHANNELS + 1, 256, 3, 1, 1), 
+                ResidualConv2d(HICDIFFUSION_OUTPUT_CHANNELS + self.config.hicdiffusion_mask, 256, 3, 1, 1), 
                 ResidualConv2d(256, 128, 3, 1, 1), 
                 ResidualConv2d(128, 64, 3, 1, 1), 
                 ResidualConv2d(64, 32, 3, 1, 1), 
@@ -95,10 +99,12 @@ class PairEncoderModel(PreTrainedModel):
             self.left_model if config.anchor_encoder_shared else self._anchor_encoder(config)
         )
         self.context_model = self._context_encoder(config)
+        self.use_context_mask = self.config.hicdiffusion_mask
         self.use_context_features = self.context_model is not None
+        self.use_anchor_features = self.left_model is not None
         self.final = nn.Sequential(
             nn.Linear(
-                in_features=config.hidden_size * (2 + self.use_context_features), 
+                in_features=config.hidden_size * (2 * self.use_anchor_features + self.use_context_features), 
                 out_features=config.hidden_size
             ), 
             nn.ReLU()
@@ -122,12 +128,12 @@ class PairEncoderModel(PreTrainedModel):
             attention_mask=right_attention_mask,
         )
         
+        features = [left_hidden, right_hidden] if self.use_anchor_features else []
         if self.use_context_features:
-            context_hidden = self.context_model(context_sequence, context_mask)
-            x = torch.cat([left_hidden, right_hidden, context_hidden], dim=1)
-        else:
-            x = torch.cat([left_hidden, right_hidden], dim=1)
+            context_hidden = self.context_model(context_sequence, context_mask if self.use_context_mask else None)
+            features.append(context_hidden)
         
+        x = torch.cat(features, dim=1)
         x = self.final(x)
         return x
 
