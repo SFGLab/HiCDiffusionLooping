@@ -34,7 +34,8 @@ def notify(msg):
         
         requests.post(
             URL + key + "/sendmessage",
-            json={"chat_id": user_id, "text": text + msg, 'parse_mode': 'MarkdownV2'}
+            json={"chat_id": user_id, "text": text + msg, 'parse_mode': 'MarkdownV2'},
+            timeout=60,
         )
 
     except Exception as e:
