@@ -19,17 +19,38 @@ pipeline fimo --motif MA0139.2.meme:v0 --sequence GRCh38-reference-genome:v0 || 
 pipeline fimo --motif MA0139.2.meme:v0 --sequence 4DNFI2OEE66L.delly.vcf.fa:latest || exit
 pipeline fimo --motif MA0139.2.meme:v0 --sequence 4DNFI1GNQM8L.delly.vcf.fa:latest || exit
 
+pipeline fimo --motif MA1930.2.meme:v0 --sequence GRCh38-reference-genome:v0 || exit
+pipeline fimo --motif MA1930.2.meme:v0 --sequence 4DNFI2OEE66L.delly.vcf.fa:latest || exit
+pipeline fimo --motif MA1930.2.meme:v0 --sequence 4DNFI1GNQM8L.delly.vcf.fa:latest || exit
+
+pipeline fimo --motif MA1929.2.meme:v0 --sequence GRCh38-reference-genome:v0 || exit
+pipeline fimo --motif MA1929.2.meme:v0 --sequence 4DNFI2OEE66L.delly.vcf.fa:latest || exit
+pipeline fimo --motif MA1929.2.meme:v0 --sequence 4DNFI1GNQM8L.delly.vcf.fa:latest || exit
+
 
 ##################### PET PAIRS ################################################
 pairs='
 4DNFI9SL1WSF:v0
+4DNFIA3H6KXY:v0
+4DNFIS9CCN6R:v0
+4DNFI2BAXOSW:v0
 '
 peaks='
 4DNFIV1N7TLK:v0
+4DNFINV9R36U:v0
+4DNFIG4HFIT9:v0
+4DNFIW1VY2CW:v0
 '
 motifs='
-fimo_MA0139.2_GRCh38_full_analysis_set_plus_decoy_hla.tsv.gz:latest
+fimo_MA1929.2_4DNFI1GNQM8L.delly.vcf.tsv.gz:latest
+fimo_MA1929.2_4DNFI2OEE66L.delly.vcf.tsv.gz:latest
+fimo_MA1929.2_GRCh38_full_analysis_set_plus_decoy_hla.tsv.gz:latest
+fimo_MA1930.2_4DNFI1GNQM8L.delly.vcf.tsv.gz:latest
+fimo_MA1930.2_4DNFI2OEE66L.delly.vcf.tsv.gz:latest
+fimo_MA1930.2_GRCh38_full_analysis_set_plus_decoy_hla.tsv.gz:latest
+fimo_MA0139.2_4DNFI2OEE66L.delly.vcf.tsv.gz:latest
 fimo_MA0139.2_4DNFI1GNQM8L.delly.vcf.tsv.gz:latest
+fimo_MA0139.2_GRCh38_full_analysis_set_plus_decoy_hla.tsv.gz:latest
 '
 pipeline pet_pairs \
     --pairs $(to_list "$pairs") \
