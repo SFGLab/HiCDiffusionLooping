@@ -28,4 +28,15 @@ if __name__ == '__main__':
             )
             print(run.log_artifact(artifact_4dn))
 
+
+    artifact_hicdiffusion = wandb.Artifact(
+        name='hicdiffusion_encoder_decoder',
+        type='model',
+    )
+    artifact_hicdiffusion.add_reference(
+        uri='https://zenodo.org/records/13840733/files/hicdiffusion.ckpt?download=1', 
+        name='hicdiffusion.ckpt'
+    )
+    print(run.log_artifact(artifact_hicdiffusion))
+
     run.finish()
