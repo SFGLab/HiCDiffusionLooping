@@ -1,6 +1,7 @@
 from torchtyping import TensorType as _Tensor
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import pytorch_lightning as pl
 
 from hicdifflib.utils import bp
@@ -15,15 +16,13 @@ HICDIFFUSION_OUTPUT_SIZE = 256
 
 
 class HiCDiffusion(pl.LightningModule):
-    def __init__(self, encoder_decoder_model: str):
+    def __init__(self, encoder_decoder_model: str, flash_attn: bool = True):
         super().__init__()
         self.encoder_decoder = HiCDiffusionEncoderDecoder.load_from_checkpoint(encoder_decoder_model)
-        self.encoder_decoder.freeze()
-        self.encoder_decoder.eval()
         self.model = UnetConditional(
             dim = 64,
             dim_mults = (1, 2, 4, 8),
-            flash_attn = True,
+            flash_attn = flash_attn,
             channels=1
         )
         self.diffusion = GaussianDiffusionConditional(
@@ -32,6 +31,17 @@ class HiCDiffusion(pl.LightningModule):
             timesteps = 10,
             sampling_timesteps = 10
         )
+
+    def forward(self, x):
+        channels, size = HICDIFFUSION_OUTPUT_CHANNELS, HICDIFFUSION_OUTPUT_SIZE
+        y_cond = self.encoder_decoder.encoder(x)
+        y_cond = self.encoder_decoder.decoder(y_cond)
+        y_cond_decoded = self.encoder_decoder.reduce_layer(y_cond)
+        y_cond_decoded = y_cond_decoded.view(-1, 1, size, size)
+        y_cond = y_cond.view(-1, channels, size, size)
+        y_pred = self.diffusion.sample(batch_size=y_cond.shape[0], x_self_cond=y_cond, return_all_timesteps=False)
+        y_pred = F.relu(y_pred + y_cond_decoded)
+        return [y_cond, y_pred]
 
 
 class ResidualConv2d(nn.Module):

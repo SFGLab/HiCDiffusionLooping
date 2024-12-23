@@ -18,7 +18,7 @@ class PairEncoderConfig2(PretrainedConfig):
         diffusion_checkpoint: str | None = None,
         diffusion_flash_attn: bool = False,
         diffusion_frozen: bool = True,
-        hicdiffuion_mask: bool = True
+        hicdiffusion_mask: bool = True,
         anchor_encoder: str | None = "m10an/DNABERT-S",
         anchor_encoder_shared: bool = True,
         hidden_size: int = 768,
@@ -31,7 +31,7 @@ class PairEncoderConfig2(PretrainedConfig):
         self.diffusion_checkpoint = diffusion_checkpoint
         self.diffusion_flash_attn = diffusion_flash_attn
         self.diffusion_frozen = diffusion_frozen
-        self.hicdiffuion_mask = hicdiffuion_mask
+        self.hicdiffusion_mask = hicdiffusion_mask
         self.anchor_encoder = anchor_encoder
         self.anchor_encoder_shared = anchor_encoder_shared
         self.hidden_size = hidden_size
@@ -69,7 +69,7 @@ class PairEncoderModel(PreTrainedModel):
             self._freeze_model(model)
         return MeanPoolingEncoder(model)
     
-    def _context_encoder(self, config):        
+    def _context_encoder(self, config: PairEncoderConfig2):        
         model = HiCDiffusion.from_checkpoint(
             config.diffusion_checkpoint,
             encoder_decoder_model=config.encoder_decoder_checkpoint, 
@@ -85,8 +85,9 @@ class PairEncoderModel(PreTrainedModel):
             
         return model
 
-    def __init__(self, config: PairEncoderConfig):
+    def __init__(self, config: PairEncoderConfig2):
         super().__init__(config)
+        self.config: PairEncoderConfig2
         self.left_model = self._anchor_encoder(config)
         self.right_model = (
             self.left_model if config.anchor_encoder_shared else self._anchor_encoder(config)
@@ -97,9 +98,9 @@ class PairEncoderModel(PreTrainedModel):
         self.use_anchor_features = self.left_model is not None
         self.context_reduce = nn.Sequential(
             ResidualConv2d(
-                HICDIFFUSION_OUTPUT_CHANNELS
-                + self.config.hicdiffusion_mask
-                + 1,
+                HICDIFFUSION_OUTPUT_CHANNELS     # y_cond channels
+                + self.config.hicdiffusion_mask  # mask channel
+                + 1,                             # y_pred channel
                 256, 3, 1, 1
             ),
             ResidualConv2d(256, 128, 3, 1, 1), 
@@ -142,7 +143,7 @@ class PairEncoderModel(PreTrainedModel):
             )
             features.extend([left_hidden, right_hidden])
         
-        context = list(self.context_model(context_sequence))
+        context = self.context_model(context_sequence)
         if self.use_context_mask:
             context.append(context_mask)
         features.append(self.context_reduce(context))
@@ -153,9 +154,8 @@ class PairEncoderModel(PreTrainedModel):
 
 
 class PairEncoderForClassification(PreTrainedModel):
-    config_class = PairEncoderConfig
-
-    def __init__(self, config: PairEncoderConfig):
+    config_class = PairEncoderConfig2
+    def __init__(self, config: PairEncoderConfig2):
         super().__init__(config)
         self.encoder = PairEncoderModel(config)
         self.dropout = nn.Dropout(config.classifier_dropout)
