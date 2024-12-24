@@ -16,6 +16,9 @@ class PairEncoderConfig(PretrainedConfig):
         hicdiffusion_checkpoint: str | None = None,
         hicdiffusion_frozen: bool = True,
         hicdiffusion_mask: bool = True,
+        prediffusion_reduce: bool = False,
+        prediffusion_reduce_frozen: bool = True,
+        prediffusion_hidden: bool = True,
         anchor_encoder: str | None = "m10an/DNABERT-S",
         anchor_encoder_shared: bool = False,
         anchor_encoder_frozen: bool = True,
@@ -37,6 +40,9 @@ class PairEncoderConfig(PretrainedConfig):
         self.hicdiffusion_checkpoint = hicdiffusion_checkpoint
         self.hicdiffusion_frozen = hicdiffusion_frozen
         self.hicdiffusion_mask = hicdiffusion_mask
+        self.prediffusion_hidden = prediffusion_hidden
+        self.prediffusion_reduce = prediffusion_reduce
+        self.prediffusion_reduce_frozen = prediffusion_reduce_frozen
         super().__init__(**kwargs)
 
 
@@ -71,7 +77,12 @@ class PairEncoderModel(PreTrainedModel):
         
         model = HiCDiffusionContextEncoder(
             reduce_layer=nn.Sequential(
-                ResidualConv2d(HICDIFFUSION_OUTPUT_CHANNELS + self.config.hicdiffusion_mask, 256, 3, 1, 1), 
+                ResidualConv2d(
+                    (self.config.prediffusion_hidden * HICDIFFUSION_OUTPUT_CHANNELS)
+                    + self.config.hicdiffusion_mask
+                    + self.config.prediffusion_reduce, 
+                    256, 3, 1, 1
+                ), 
                 ResidualConv2d(256, 128, 3, 1, 1), 
                 ResidualConv2d(128, 64, 3, 1, 1), 
                 ResidualConv2d(64, 32, 3, 1, 1), 
@@ -83,12 +94,17 @@ class PairEncoderModel(PreTrainedModel):
                 nn.Linear(HICDIFFUSION_OUTPUT_SIZE * HICDIFFUSION_OUTPUT_SIZE, config.hidden_size),
                 nn.ReLU(),
             ),
-            checkpoint=config.hicdiffusion_checkpoint
+            checkpoint=config.hicdiffusion_checkpoint,
+            prediffusion_reduce=self.config.prediffusion_reduce,
+            prediffusion_hidden=self.config.prediffusion_hidden,
         )
         
         if config.hicdiffusion_frozen:
             self._freeze_model(model.model.encoder)
             self._freeze_model(model.model.decoder)
+        
+        if model.model.reduce_layer is not None and self.config.prediffusion_reduce_frozen:
+            self._freeze_model(model.model.reduce_layer)
             
         return model
 

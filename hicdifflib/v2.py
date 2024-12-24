@@ -21,6 +21,7 @@ class PairEncoderConfig2(PretrainedConfig):
         hicdiffusion_mask: bool = True,
         anchor_encoder: str | None = "m10an/DNABERT-S",
         anchor_encoder_shared: bool = True,
+        anchor_encoder_frozen: bool = True,
         hidden_size: int = 768,
         hidden_dropout: float = 0.1,
         classifier_dropout: float | None = None,
@@ -34,6 +35,7 @@ class PairEncoderConfig2(PretrainedConfig):
         self.hicdiffusion_mask = hicdiffusion_mask
         self.anchor_encoder = anchor_encoder
         self.anchor_encoder_shared = anchor_encoder_shared
+        self.anchor_encoder_frozen = anchor_encoder_frozen
         self.hidden_size = hidden_size
         self.hidden_dropout = hidden_dropout
         self.classifier_dropout = (
@@ -70,10 +72,10 @@ class PairEncoderModel(PreTrainedModel):
         return MeanPoolingEncoder(model)
     
     def _context_encoder(self, config: PairEncoderConfig2):        
-        model = HiCDiffusion.from_checkpoint(
+        model = HiCDiffusion.load_from_checkpoint(
             config.diffusion_checkpoint,
             encoder_decoder_model=config.encoder_decoder_checkpoint, 
-            flash_attn=config.flash_attn,
+            flash_attn=config.diffusion_flash_attn,
         )
         
         if config.encoder_decoder_frozen:
@@ -132,20 +134,21 @@ class PairEncoderModel(PreTrainedModel):
         right_attention_mask: _Tensor['batch', 'sequence'] | None = None,
     ):
         features = []
-        if self.use_anchor_features:
-            left_hidden = self.left_model(
-                input_ids=left_sequence,
-                attention_mask=left_attention_mask,
-            )
-            right_hidden = self.right_model(
-                input_ids=right_sequence,
-                attention_mask=right_attention_mask,
-            )
-            features.extend([left_hidden, right_hidden])
+        # if self.use_anchor_features:
+        left_hidden = self.left_model(
+            input_ids=left_sequence,
+            attention_mask=left_attention_mask,
+        )
+        right_hidden = self.right_model(
+            input_ids=right_sequence,
+            attention_mask=right_attention_mask,
+        )
+        features.extend([left_hidden, right_hidden])
         
-        context = self.context_model(context_sequence)
-        if self.use_context_mask:
-            context.append(context_mask)
+        context = self.context_model(context_sequence) + [context_mask]
+        # if self.use_context_mask:
+        #     context.append(context_mask)
+        context = torch.cat(context, dim=1)
         features.append(self.context_reduce(context))
         
         x = torch.cat(features, dim=1)

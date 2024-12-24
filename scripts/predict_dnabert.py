@@ -23,7 +23,6 @@ from hicdifflib.trainer import BalancedTrainer
 
 logger = logging.getLogger(__name__)
 
-
 DEBUG=False
 MODEL_NAME=sys.argv[1]
 RUN_NAME=MODEL_NAME
@@ -129,17 +128,19 @@ def main(run):
         np.expand_dims(valid.logits.values, 1),
         np.expand_dims(valid.label.values, 1)
     ))
-    run.log({'valid': valid_metrics})
+    run.log({f'valid/{k}': v for k,v in valid_metrics.items()})
     
     test = test_samples[test_samples.chr.isin(test_chroms)]
     run.log({
-        'test': compute_metrics(
+        f'test/{k}': v
+        for k,v in
+        compute_metrics(
             (
                 np.expand_dims(test.logits.values, 1),
                 np.expand_dims(test.label.values, 1)
             ),
             thr=valid_metrics['threshold']
-        ),
+        ).items()
     })
     
 
