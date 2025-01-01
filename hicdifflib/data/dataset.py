@@ -5,16 +5,21 @@ from pathlib import Path
 from collections import defaultdict
 
 import pandas as pd
+import numpy as np
 import torch
 from Bio import SeqIO
+from cooler import Cooler
 from torch.utils.data import Dataset
 from fire import Fire
 from tqdm import tqdm, trange
 from transformers import PreTrainedTokenizer, AutoTokenizer
+from skimage.transform import resize
 
 from hicdifflib.hicdiffusion import HICDIFFUSION_OUTPUT_SIZE, HICDIFFUSION_WINDOW_SIZE
 from hicdifflib.data.base import Artifact, BasePipeline
 from hicdifflib.utils import bstr, sequence_to_onehot, sequences_mask
+
+HIC_SHAPE = (HICDIFFUSION_OUTPUT_SIZE, HICDIFFUSION_OUTPUT_SIZE)
 
 
 class PairedEndsDataset(Dataset):
@@ -23,6 +28,8 @@ class PairedEndsDataset(Dataset):
         pairs: Path,
         sequences: list[Path],
         chroms: list[str],
+        hic: Path | None = None,
+        hic_resolution: int = 10_000,
         mask_size: int = HICDIFFUSION_OUTPUT_SIZE,
         tokenizer: PreTrainedTokenizer | None = None,
         center_context: bool = False,
@@ -38,6 +45,7 @@ class PairedEndsDataset(Dataset):
         self.min_length_match = min_length_match
         self.max_anchor_length = max_anchor_length
         self.progress_bar = progress_bar
+        self._cooler = None if hic is None else Cooler(f"{hic}::/resolutions/{hic_resolution}")
 
         if positive_min_pet_counts <= negative_max_pet_counts:
             raise ValueError(
@@ -65,6 +73,10 @@ class PairedEndsDataset(Dataset):
         for pair_idx in tqdm(self._pairs_df.index, disable=not self.progress_bar, ):
             self._valid_sequences += self._check_pair_sequences(pair_idx)
         self._logger.info("%d valid sequences", len(self._valid_sequences))
+
+    def read_hic_matrix(self, chr, start, end):
+        m = self._cooler.matrix(field="count", balance=None).fetch(f"{chr}:{start}-{end}")
+        return np.log(m+1)
 
     def _load_sequences(self, sequensces: list[Path], chroms: list[str]) -> dict:
         result = defaultdict(list)
@@ -114,7 +126,11 @@ class PairedEndsDataset(Dataset):
 
             # bound possible range of window positions which includes both anchors
             min_context_start = max(row.end_r - HICDIFFUSION_WINDOW_SIZE, 0)
-            max_context_end = min(row.start_l + HICDIFFUSION_WINDOW_SIZE, len(seq))
+            max_context_end = min(
+                row.start_l + HICDIFFUSION_WINDOW_SIZE, 
+                len(seq), 
+                *([] if self._cooler is None else [self._cooler.chromsizes[row.chr]])
+            )
             if (
                 min_context_start > row.start_l or
                 max_context_end < row.end_r or
@@ -161,6 +177,10 @@ class PairedEndsDataset(Dataset):
         data['context'] = seq[data['context_slice']]
         data['anchor_l'] = data['context'][data['anchor_slice_l']]
         data['anchor_r'] = data['context'][data['anchor_slice_r']]
+        
+        data['hic'] = None
+        if self._cooler is not None:
+            data['hic'] = resize(self.read_hic_matrix(data['chr'], context_start, context_end), HIC_SHAPE)
         return data
 
     def get_item(
@@ -192,6 +212,9 @@ class PairedEndsDataset(Dataset):
             end_r=inputs['anchor_slice_r'].stop,
             size=self.mask_size
         )
+
+        if inputs['hic'] is not None:
+            inputs['hic'] = torch.unsqueeze(torch.unsqueeze(torch.tensor(inputs['hic'], dtype=torch.float32), 0), 0)
         return inputs
 
     def __getitem__(self, i: int) -> dict:

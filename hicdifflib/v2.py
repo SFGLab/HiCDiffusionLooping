@@ -18,7 +18,9 @@ class PairEncoderConfig2(PretrainedConfig):
         diffusion_checkpoint: str | None = None,
         diffusion_flash_attn: bool = False,
         diffusion_frozen: bool = True,
+        hicdiffusion_y_cond: bool = True,
         hicdiffusion_mask: bool = True,
+        hic: bool = False,
         anchor_encoder: str | None = "m10an/DNABERT-S",
         anchor_encoder_shared: bool = True,
         anchor_encoder_frozen: bool = True,
@@ -33,6 +35,7 @@ class PairEncoderConfig2(PretrainedConfig):
         self.diffusion_flash_attn = diffusion_flash_attn
         self.diffusion_frozen = diffusion_frozen
         self.hicdiffusion_mask = hicdiffusion_mask
+        self.hicdiffusion_y_cond = hicdiffusion_y_cond
         self.anchor_encoder = anchor_encoder
         self.anchor_encoder_shared = anchor_encoder_shared
         self.anchor_encoder_frozen = anchor_encoder_frozen
@@ -43,6 +46,7 @@ class PairEncoderConfig2(PretrainedConfig):
             if classifier_dropout is None else
             classifier_dropout
         )
+        self.hic = hic
         super().__init__(**kwargs)
 
 
@@ -71,7 +75,9 @@ class PairEncoderModel(PreTrainedModel):
             self._freeze_model(model)
         return MeanPoolingEncoder(model)
     
-    def _context_encoder(self, config: PairEncoderConfig2):        
+    def _context_encoder(self, config: PairEncoderConfig2):
+        if config.diffusion_checkpoint is None and config.encoder_decoder_checkpoint is None:
+            return
         model = HiCDiffusion.load_from_checkpoint(
             config.diffusion_checkpoint,
             encoder_decoder_model=config.encoder_decoder_checkpoint, 
@@ -100,9 +106,11 @@ class PairEncoderModel(PreTrainedModel):
         self.use_anchor_features = self.left_model is not None
         self.context_reduce = nn.Sequential(
             ResidualConv2d(
-                HICDIFFUSION_OUTPUT_CHANNELS     # y_cond channels
+                (HICDIFFUSION_OUTPUT_CHANNELS * self.config.hicdiffusion_y_cond * self.use_context_features)
+                + self.use_context_features # y_pred
+                + self.config.hic # to use real hic matrix
                 + self.config.hicdiffusion_mask  # mask channel
-                + 1,                             # y_pred channel
+                ,
                 256, 3, 1, 1
             ),
             ResidualConv2d(256, 128, 3, 1, 1), 
@@ -118,7 +126,7 @@ class PairEncoderModel(PreTrainedModel):
         )
         self.final = nn.Sequential(
             nn.Linear(
-                in_features=config.hidden_size * (2 * self.use_anchor_features + self.use_context_features), 
+                in_features=config.hidden_size * (2 * self.use_anchor_features + (self.use_context_features or self.config.hic)), 
                 out_features=config.hidden_size
             ),
             nn.ReLU()
@@ -130,6 +138,7 @@ class PairEncoderModel(PreTrainedModel):
         right_sequence: _Tensor['batch', 'sequence'],
         context_sequence: _Tensor['batch', 'onehot', 'sequence'],
         context_mask: _Tensor['batch', 'w', 'h'],
+        hic: _Tensor['batch', 'w', 'h'] | None = None,
         left_attention_mask: _Tensor['batch', 'sequence'] | None = None,
         right_attention_mask: _Tensor['batch', 'sequence'] | None = None,
     ):
@@ -145,9 +154,19 @@ class PairEncoderModel(PreTrainedModel):
         )
         features.extend([left_hidden, right_hidden])
         
-        context = self.context_model(context_sequence) + [context_mask]
-        # if self.use_context_mask:
-        #     context.append(context_mask)
+        context = []
+        if self.use_context_features:
+            y_cond, y_pred = self.context_model(context_sequence)
+            if self.config.hicdiffusion_y_cond:
+                context.append(y_cond)
+            context.append(y_pred)
+        
+        if hic is not None:
+            context.append(hic)
+        
+        if self.use_context_mask:
+            context.append(context_mask)
+
         context = torch.cat(context, dim=1)
         features.append(self.context_reduce(context))
         
@@ -170,6 +189,7 @@ class PairEncoderForClassification(PreTrainedModel):
         right_sequence: _Tensor['batch', 'sequence'],
         context_sequence: _Tensor['batch', 'onehot', 'sequence'],
         context_mask: _Tensor['batch', 'w', 'h'],
+        hic: _Tensor['batch', 'w', 'h'] | None = None,
         labels: _Tensor['batch', 'label'] | None = None,
         left_attention_mask: _Tensor['batch', 'sequence'] | None = None,
         right_attention_mask: _Tensor['batch', 'sequence'] | None = None,
@@ -181,6 +201,7 @@ class PairEncoderForClassification(PreTrainedModel):
             right_attention_mask=right_attention_mask,
             context_sequence=context_sequence,
             context_mask=context_mask,
+            hic=hic,
         )
         x = self.dropout(x)
         logits = self.classifier(x)
