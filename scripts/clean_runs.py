@@ -10,9 +10,10 @@ if __name__ == '__main__':
     for run in runs:
         run: Run
         if (
-            run.job_type in ('artifact_log', 'datagen') and
-            run.state == 'finished' and 
-            any(x for x in run.logged_artifacts() if x.type == 'dataset')
+            run.job_type != 'debug'
+            # run.job_type in ('artifact_log', 'datagen', 'train', 'predict') and
+            # run.state == 'finished' and 
+            # any(x for x in run.logged_artifacts() if x.type == 'dataset')
         ):
             continue
         print(

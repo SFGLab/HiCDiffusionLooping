@@ -1,7 +1,9 @@
 import logging
 
+import numpy as np
 import pandas as pd
 from pyranges import PyRanges
+from sklearn.neighbors import NearestNeighbors
 
 from hicdifflib.data.base import log_text
 
@@ -18,7 +20,12 @@ def generate_pet_pairs(
     min_strand_ratio: float,
     anchor_peak_slack: int,
     anchor_peak_min_overlap: int,
-    negative_pair_range: int
+    negative_pair_range: int,
+    knn_algorithm: str = 'ball_tree', 
+    knn_radius: float = 10_000, 
+    knn_metric: str = 'euclidean',
+    knn_distance_to_drop: float | None = None,
+    # knn_distance_to_positive: float | None = None,
 ):
 
     anchors_l_df = pairs_df.rename(
@@ -141,9 +148,19 @@ def generate_pet_pairs(
     )
     logger.info('Filtered %d positive pairs', len(positives_df))
 
-    filter = pd.Series(zip(positives_df.peak_index_l, positives_df.peak_index_r))
-    df_ids = pd.Series(zip(negatives_df.peak_index, negatives_df.peak_index_r))
-    negatives_df = negatives_df[~df_ids.isin(filter)].reset_index(drop=True)
+
+    if knn_distance_to_drop is None:
+        filter = pd.Series(zip(positives_df.peak_index_l, positives_df.peak_index_r))
+        df_ids = pd.Series(zip(negatives_df.peak_index, negatives_df.peak_index_r))
+        neg_mask = ~df_ids.isin(filter)
+    else:
+        nbrs = NearestNeighbors(algorithm=knn_algorithm, radius=knn_radius, metric=knn_metric, n_neighbors=10)
+        logger.info('Using %s to drop too close negative pairs', repr(nbrs))
+        nbrs.fit(negatives_df[['Start', 'End_r']].values)
+        distances, indices = nbrs.kneighbors(positives_df[['start_l', 'end_r']].values)
+        neg_mask = ~negatives_df.index.isin(np.unique(indices.flatten()[distances.flatten() <= knn_distance_to_drop]))
+    
+    negatives_df = negatives_df[neg_mask].reset_index(drop=True)
     negatives_df['pet_counts'] = 0
     logger.info('After removal of overlapped generated and positive pairs: negative pairs %d', len(negatives_df))
 

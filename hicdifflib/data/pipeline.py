@@ -45,10 +45,16 @@ class DataPipeline(DataConfig):
         pairs: list[str | Artifact],
         peaks: list[str | Artifact],
         motifs: list[str | Artifact],
+        peak_score_idx: int = 6,
         peak_strand_slack: int = 0,
         min_strand_ratio: float = 0.5,
         anchor_peak_slack: int = 0,
         anchor_peak_min_overlap: int = 500,
+        knn_algorithm: str = 'ball_tree', 
+        knn_radius: float = 10_000, 
+        knn_metric: str = 'euclidean',
+        knn_distance_to_drop: float | None = None,
+        name: str = 'pet',
     ):
         if self.wandb:
             run.config.update({
@@ -57,6 +63,13 @@ class DataPipeline(DataConfig):
                 'anchor_peak_slack': anchor_peak_slack,
                 'anchor_peak_min_overlap': anchor_peak_min_overlap,
             })
+            if knn_distance_to_drop is not None:
+                run.config.update({
+                    'knn_distance_to_drop': knn_distance_to_drop,
+                    'knn_metric': knn_metric,
+                    'knn_radius': knn_radius,
+                    'knn_algorithm': knn_algorithm,
+                })
 
         pairs = [self._get_artifact(x, run) for x in pairs]
         peaks = [self._get_artifact(x, run) for x in peaks]
@@ -76,12 +89,14 @@ class DataPipeline(DataConfig):
             pd.read_csv(
                 artifact.path,
                 sep='\t',
-                names=['chr', 'start', 'end', 'c1', 'c2', 'c3', 'value', 'c4', 'c5']
+                header=None,
+                # names=['chr', 'start', 'end', 'c1', 'c2', 'c3', 'value', 'c4', 'c5']
             )
             for artifact in peaks
         ])
-        peaks_df = peaks_df[['chr', 'start', 'end', 'value']].reset_index()
-
+        peaks_df = peaks_df.loc[:, [0, 1, 2, peak_score_idx]]
+        peaks_df.columns = ['chr', 'start', 'end', 'value']
+        peaks_df = peaks_df.reset_index()
 
         motifs_df = pd.concat([
             pd.read_csv(artifact.path, sep='\t', compression='gzip')
@@ -107,9 +122,13 @@ class DataPipeline(DataConfig):
                 anchor_peak_min_overlap=anchor_peak_min_overlap,
                 anchor_peak_slack=anchor_peak_slack,
                 negative_pair_range=HICDIFFUSION_WINDOW_SIZE,
+                knn_distance_to_drop=knn_distance_to_drop,
+                knn_metric=knn_metric,
+                knn_radius=knn_radius,
+                knn_algorithm=knn_algorithm,
             )
 
-        path = Path(self.data_root) / 'pet_pairs.csv'
+        path = Path(self.data_root) / f'{name}_pairs.csv'
         df.to_csv(path, index=False)
         self._log_artifact(run, path)
 
@@ -121,7 +140,8 @@ class DataPipeline(DataConfig):
         motif = self._get_artifact(motif, run)
         sequence = self._get_artifact(sequence, run)
         filename = 'fimo_' + motif.path_no_suffix.name + '_' + sequence.path_no_suffix.name + '.tsv.gz'
-        output = Path(self.data_root) / filename
+        subdir = sequence.path.relative_to(self.data_root).parent
+        output = Path(self.data_root) / subdir / filename
         self._exec_fimo(sequence, motif, output)
         self._log_artifact(run, output)
 

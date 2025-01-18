@@ -20,6 +20,8 @@ class PairEncoderConfig2(PretrainedConfig):
         diffusion_frozen: bool = True,
         hicdiffusion_y_cond: bool = True,
         hicdiffusion_mask: bool = True,
+        hicdiffusion_cnn: str | None = 'residuals',
+        hicdiffusion_attn: str | None = None,
         hic: bool = False,
         anchor_encoder: str | None = "m10an/DNABERT-S",
         anchor_encoder_shared: bool = True,
@@ -48,6 +50,15 @@ class PairEncoderConfig2(PretrainedConfig):
         )
         self.hic = hic
         super().__init__(**kwargs)
+
+class RowColumnCrossAttention(nn.Module):
+    def __init__(self, embed_dim, num_heads):
+        super().__init__()
+        self.attention = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads, batch_first=True)
+        self.fc = nn.Sequential(
+            nn.Linear(embed_dim * 2, embed_dim),
+            nn.ReLU(),
+        )
 
 
 class MeanPoolingEncoder(nn.Module):

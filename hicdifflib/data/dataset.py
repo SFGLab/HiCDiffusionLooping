@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from Bio import SeqIO
 from cooler import Cooler
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, ConcatDataset
 from fire import Fire
 from tqdm import tqdm, trange
 from transformers import PreTrainedTokenizer, AutoTokenizer
@@ -20,6 +20,19 @@ from hicdifflib.data.base import Artifact, BasePipeline
 from hicdifflib.utils import bstr, sequence_to_onehot, sequences_mask
 
 HIC_SHAPE = (HICDIFFUSION_OUTPUT_SIZE, HICDIFFUSION_OUTPUT_SIZE)
+
+
+class ConcatPairedEndsDataset(ConcatDataset):
+    def __init__(self, datasets: list[Dataset]):
+        super().__init__(datasets)
+        self._datasets = datasets
+
+    def get_labels(self) -> list[int]:
+        return [
+            int(ds._pairs_df.loc[x['pair_idx'], 'label'])
+            for ds in self._datasets
+            for x in ds._valid_sequences
+        ]
 
 
 class PairedEndsDataset(Dataset):
@@ -38,6 +51,9 @@ class PairedEndsDataset(Dataset):
         progress_bar: bool = True,
         positive_min_pet_counts: int = 1,
         negative_max_pet_counts: int = 0,
+        # cached data
+        pairs_df: pd.DataFrame | None = None,
+        valid_sequences: list | None = None,
     ) -> None:
         self._tokenizer = tokenizer
         self.mask_size = mask_size
@@ -46,6 +62,9 @@ class PairedEndsDataset(Dataset):
         self.max_anchor_length = max_anchor_length
         self.progress_bar = progress_bar
         self._cooler = None if hic is None else Cooler(f"{hic}::/resolutions/{hic_resolution}")
+        self._logger = logging.getLogger(self.__class__.__name__)
+        self._sequences = self._load_sequences(sequences, chroms)
+
 
         if positive_min_pet_counts <= negative_max_pet_counts:
             raise ValueError(
@@ -53,7 +72,11 @@ class PairedEndsDataset(Dataset):
                 f'{positive_min_pet_counts} <= {negative_max_pet_counts:}'
             )
 
-        self._logger = logging.getLogger(self.__class__.__name__)
+        if pairs_df is not None:
+            self._pairs_df = pairs_df
+            self._valid_sequences = valid_sequences
+            return
+        
         self._pairs_df = (
             pd.read_csv(pairs)
             .query('chr.isin(@chroms)')
@@ -67,7 +90,6 @@ class PairedEndsDataset(Dataset):
         self._pairs_df = self._pairs_df.loc[~margin_labels, :]
         self._logger.info("positives: %s%%", 100 * sum(self._pairs_df['label']) / len(self._pairs_df))
 
-        self._sequences = self._load_sequences(sequences, chroms)
         self._logger.info("Validating sequences (%d pairs)", len(self._pairs_df))
         self._valid_sequences = []
         for pair_idx in tqdm(self._pairs_df.index, disable=not self.progress_bar, ):

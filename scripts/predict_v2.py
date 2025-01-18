@@ -2,6 +2,7 @@ import os
 import sys
 import logging
 import datetime as dt
+from pathlib import Path
 
 import wandb
 import torch
@@ -55,19 +56,15 @@ def main(run):
     data_config = DataConfig(data_root='/mnt/evafs/scratch/shared/imialeshka/hicdata/')
 
     dataset_kwargs = dict(
-        pairs=WandbArtifact('pet_pairs.csv:v1', data_config, run).path,
+        pairs=WandbArtifact('gm12878_pairs.csv:v4', data_config, run).path,
+        # pairs=WandbArtifact('pet_pairs.csv:v1', data_config, run).path,
         sequences=[WandbArtifact('GRCh38-reference-genome:v0', data_config, run).path],
         tokenizer=tokenizer,
         progress_bar=False,
         positive_min_pet_counts=3,
         negative_max_pet_counts=2,
         max_anchor_length=510,
-    )
-    config_kwargs = dict(
-        anchor_encoder_shared=True,
-        hicdiffusion_frozen=True,
-        hicdiffusion_checkpoint=str(WandbArtifact('hicdiffusion_encoder_decoder:v0', data_config))
-        # hicdiffusion_checkpoint=None,
+        # hic=WandbArtifact('gm12878_4DNFIUEG39YZ:v0', data_config).path,
     )
     
     for key, value in os.environ.items():
@@ -75,10 +72,9 @@ def main(run):
             run.config[key] = value
     
     for key, value in dataset_kwargs.items():
-        if isinstance(value, (int, float, str)):
+        if isinstance(value, (int, float, str, Path)):
             run.config[key] = value
 
-    run.config.update(config_kwargs)
     pred_filename = f"preds_{dt.datetime.now().isoformat(sep='_', timespec='seconds')}.csv"
     run.config.update({
         'model_name': MODEL_NAME, 'checkpoint': RUN_CHECKPOINT, 'predictions_file': pred_filename
@@ -118,7 +114,7 @@ def main(run):
     test_logits = []
     for batch in tqdm(dl):
         with torch.inference_mode():
-            loss, logits = model(**{k: v.cuda() for k,v in batch.items()})
+            loss, logits = model(**{k: (v.cuda() if v is not None else v) for k,v in batch.items()})
         test_logits.append(logits.cpu().numpy())
     test_samples['logits'] = np.concatenate(test_logits)
     test_samples.to_csv(preds_path, index=False)
@@ -129,19 +125,18 @@ def main(run):
         np.expand_dims(valid.label.values, 1)
     ))
     run.log({f'valid/{k}': v for k,v in valid_metrics.items()})
+    run.log({f'valid_gm12878/{k}': v for k,v in valid_metrics.items()})
     
     test = test_samples[test_samples.chr.isin(test_chroms)]
-    run.log({
-        f'test/{k}': v
-        for k,v in
-        compute_metrics(
-            (
-                np.expand_dims(test.logits.values, 1),
-                np.expand_dims(test.label.values, 1)
-            ),
-            thr=valid_metrics['threshold']
-        ).items()
-    })
+    test_metrics = compute_metrics(
+        (
+            np.expand_dims(test.logits.values, 1),
+            np.expand_dims(test.label.values, 1)
+        ),
+        thr=valid_metrics['threshold']
+    )
+    run.log({f'test/{k}': v for k,v in test_metrics.items()})
+    run.log({f'test_gm12878/{k}': v for k,v in test_metrics.items()})
     
 
 
