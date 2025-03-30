@@ -1,3 +1,5 @@
+"""Deprecated modeling classes"""
+
 import torch
 import torch.nn as nn
 from torchtyping import TensorType as _Tensor
