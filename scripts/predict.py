@@ -2,6 +2,7 @@ import os
 import sys
 import logging
 import datetime as dt
+from pathlib import Path
 
 import wandb
 import torch
@@ -16,7 +17,7 @@ from transformers import TrainingArguments
 from hicdifflib.data.base import DataConfig, WandbArtifact
 from hicdifflib.data.collator import PairedEndsCollatorWithPadding
 from hicdifflib.data.dataset import PairedEndsDataset
-from hicdifflib.dnabert import PairEncoderConfig, PairEncoderForClassification
+from hicdifflib.v2 import PairEncoderConfig2 as PairEncoderConfig, PairEncoderForClassification
 from hicdifflib.metrics import compute_metrics
 from hicdifflib.trainer import BalancedTrainer
 
@@ -27,6 +28,7 @@ DEBUG=False
 MODEL_NAME=sys.argv[1]
 RUN_NAME=MODEL_NAME
 RUN_CHECKPOINT=int(sys.argv[2])
+POSITION=float(sys.argv[3]) if len(sys.argv) == 4 else 0.5
 
 if DEBUG:
     RUN_NAME += '_debug'
@@ -52,22 +54,18 @@ def main(run):
     train_chroms = [f'chr{i}' for i in range(1, 23) if f'chr{i}' not in (test_chroms+eval_chroms)]
     
     tokenizer = AutoTokenizer.from_pretrained("m10an/DNABERT-S", trust_remote_code=True)
-    data_config = DataConfig(data_root='/mnt/evafs/scratch/shared/imialeshka/hicdata/')
+    data_config = DataConfig(data_root='./data')
 
     dataset_kwargs = dict(
-        pairs=WandbArtifact('pet_pairs.csv:v1', data_config, run).path,
+        pairs=WandbArtifact('gm12878_pairs.csv:latest', data_config, run).path,
+        # pairs=WandbArtifact('pet_pairs.csv:v1', data_config, run).path,
         sequences=[WandbArtifact('GRCh38-reference-genome:v0', data_config, run).path],
         tokenizer=tokenizer,
         progress_bar=False,
         positive_min_pet_counts=3,
         negative_max_pet_counts=2,
         max_anchor_length=510,
-    )
-    config_kwargs = dict(
-        anchor_encoder_shared=True,
-        hicdiffusion_frozen=True,
-        hicdiffusion_checkpoint=str(WandbArtifact('hicdiffusion_encoder_decoder:v0', data_config))
-        # hicdiffusion_checkpoint=None,
+        # hic=WandbArtifact('gm12878_4DNFIUEG39YZ:v0', data_config).path,
     )
     
     for key, value in os.environ.items():
@@ -75,11 +73,10 @@ def main(run):
             run.config[key] = value
     
     for key, value in dataset_kwargs.items():
-        if isinstance(value, (int, float, str)):
+        if isinstance(value, (int, float, str, Path)):
             run.config[key] = value
 
-    run.config.update(config_kwargs)
-    pred_filename = f"preds_{dt.datetime.now().isoformat(sep='_', timespec='seconds')}.csv"
+    pred_filename = f"preds_{dt.datetime.now().isoformat(sep='_', timespec='seconds')}_{POSITION}.csv"
     run.config.update({
         'model_name': MODEL_NAME, 'checkpoint': RUN_CHECKPOINT, 'predictions_file': pred_filename
     })
@@ -95,6 +92,7 @@ def main(run):
     eval_dataset = PairedEndsDataset(
         chroms=eval_chroms+test_chroms,
         center_context=True,
+        center_position=POSITION,
         **dataset_kwargs
     )
     if DEBUG:
@@ -118,7 +116,7 @@ def main(run):
     test_logits = []
     for batch in tqdm(dl):
         with torch.inference_mode():
-            loss, logits = model(**{k: v.cuda() for k,v in batch.items()})
+            loss, logits = model(**{k: (v.cuda() if v is not None else v) for k,v in batch.items()})
         test_logits.append(logits.cpu().numpy())
     test_samples['logits'] = np.concatenate(test_logits)
     test_samples.to_csv(preds_path, index=False)
@@ -129,19 +127,18 @@ def main(run):
         np.expand_dims(valid.label.values, 1)
     ))
     run.log({f'valid/{k}': v for k,v in valid_metrics.items()})
+    run.log({f'valid_gm12878/{k}': v for k,v in valid_metrics.items()})
     
     test = test_samples[test_samples.chr.isin(test_chroms)]
-    run.log({
-        f'test/{k}': v
-        for k,v in
-        compute_metrics(
-            (
-                np.expand_dims(test.logits.values, 1),
-                np.expand_dims(test.label.values, 1)
-            ),
-            thr=valid_metrics['threshold']
-        ).items()
-    })
+    test_metrics = compute_metrics(
+        (
+            np.expand_dims(test.logits.values, 1),
+            np.expand_dims(test.label.values, 1)
+        ),
+        thr=valid_metrics['threshold']
+    )
+    run.log({f'test/{k}': v for k,v in test_metrics.items()})
+    run.log({f'test_gm12878/{k}': v for k,v in test_metrics.items()})
     
 
 

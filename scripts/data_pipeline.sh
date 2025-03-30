@@ -1,6 +1,3 @@
-# export WANDB_CACHE_DIR="/mnt/evafs/scratch/shared/imialeshka/.cache/wandb"
-export SINGULARITY_BIND="/mnt/evafs/scratch/shared/imialeshka/hicdata"
-
 function pipeline(){
   python hicdifflib/data.py --data_root $SINGULARITY_BIND $@
 }
@@ -57,7 +54,3 @@ pipeline pet_pairs \
     --peaks $(to_list "$peaks") \
     --motifs $(to_list "$motifs") \
     || exit
-
-# pipeline test_pairs_dataset \
-#     --pet_pairs pet_pairs.csv:v1 \
-#     --sequences '["GRCh38-reference-genome:v0","4DNFI1GNQM8L.delly.vcf.fa:v0","4DNFI2OEE66L.delly.vcf.fa:v0"]'

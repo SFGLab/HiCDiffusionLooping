@@ -46,6 +46,7 @@ class PairedEndsDataset(Dataset):
         mask_size: int = HICDIFFUSION_OUTPUT_SIZE,
         tokenizer: PreTrainedTokenizer | None = None,
         center_context: bool = False,
+        center_position: float = 0.5,
         min_length_match: float = 0.95,
         max_anchor_length: int = 512,
         progress_bar: bool = True,
@@ -58,6 +59,7 @@ class PairedEndsDataset(Dataset):
         self._tokenizer = tokenizer
         self.mask_size = mask_size
         self.center_context = center_context
+        self.center_position = center_position
         self.min_length_match = min_length_match
         self.max_anchor_length = max_anchor_length
         self.progress_bar = progress_bar
@@ -171,7 +173,7 @@ class PairedEndsDataset(Dataset):
         if context_offset is not None:
             return floor(max_offset * context_offset)
         if self.center_context:
-            return floor(max_offset * 0.5)
+            return floor(max_offset * self.center_position)
         return random.randint(0, max_offset)
 
     def get_pair_context(self, i: int, context_offset: float | None = None) -> dict:

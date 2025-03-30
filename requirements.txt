@@ -4,3 +4,4 @@ dataclasses-json
 transformers==4.46.3
 torchtyping
 requests
+scikit-learn

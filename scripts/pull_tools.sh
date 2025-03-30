@@ -1,5 +1,5 @@
 [ ! -f tools.sif ] && \
-    singularity pull tools.sif library://m10an/genomics/tools || \
+    singularity pull tools.sif library://m10an/genomics/tools:v2 || \
     echo '***skipping tools download***';
 
 [ ! -f samtools.sif ] && \

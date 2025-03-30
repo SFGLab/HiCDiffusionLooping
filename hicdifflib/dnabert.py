@@ -5,7 +5,8 @@ from transformers import PretrainedConfig, PreTrainedModel, AutoModel
 
 from hicdifflib.hicdiffusion import HICDIFFUSION_OUTPUT_CHANNELS
 from hicdifflib.hicdiffusion import HICDIFFUSION_OUTPUT_SIZE
-from hicdifflib.hicdiffusion import ResidualConv2d, HiCDiffusionContextEncoder
+from hicdifflib.hicdiffusion import HiCDiffusionContextEncoder
+from hicdifflib.cnn import ResidualConv2d
 
 
 class PairEncoderConfig(PretrainedConfig):

@@ -44,28 +44,6 @@ class HiCDiffusion(pl.LightningModule):
         return [y_cond, y_pred]
 
 
-class ResidualConv2d(nn.Module):
-
-    def __init__(self, hidden_in, hidden_out, kernel, padding, dilation):
-        super().__init__()
-        self.main = nn.Sequential(
-            nn.Conv2d(hidden_in, hidden_out, kernel, padding=padding, dilation=dilation),
-            nn.BatchNorm2d(hidden_out),
-            nn.ReLU(),
-            nn.Conv2d(hidden_out, hidden_out, kernel, padding=padding, dilation=dilation),
-            nn.BatchNorm2d(hidden_out)
-        )
-        self.relu = nn.ReLU()
-        self.downscale = nn.Sequential(
-            nn.Conv2d(hidden_in, hidden_out, kernel, padding=padding)
-        )
-    
-    def forward(self, x):
-        residual = self.downscale(x)
-        output = self.main(x)
-        return self.relu(output+residual)    
-
-
 class HiCDiffusionContextEncoder(nn.Module):
     def __init__(self, reduce_layer: nn.Module, checkpoint: str | None = None) -> None:
         super().__init__()

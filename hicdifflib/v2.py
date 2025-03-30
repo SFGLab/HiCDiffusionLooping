@@ -5,7 +5,8 @@ from transformers import PretrainedConfig, PreTrainedModel, AutoModel
 
 from hicdifflib.hicdiffusion import HICDIFFUSION_OUTPUT_CHANNELS
 from hicdifflib.hicdiffusion import HICDIFFUSION_OUTPUT_SIZE
-from hicdifflib.hicdiffusion import ResidualConv2d, HiCDiffusion
+from hicdifflib.hicdiffusion import HiCDiffusion
+from hicdifflib.cnn import ResidualConv2d, HiCnMaskEncoder3D
 
 
 class PairEncoderConfig2(PretrainedConfig):
@@ -38,6 +39,7 @@ class PairEncoderConfig2(PretrainedConfig):
         self.diffusion_frozen = diffusion_frozen
         self.hicdiffusion_mask = hicdiffusion_mask
         self.hicdiffusion_y_cond = hicdiffusion_y_cond
+        self.hicdiffusion_cnn = hicdiffusion_cnn
         self.anchor_encoder = anchor_encoder
         self.anchor_encoder_shared = anchor_encoder_shared
         self.anchor_encoder_frozen = anchor_encoder_frozen
@@ -99,7 +101,7 @@ class PairEncoderModel(PreTrainedModel):
             self._freeze_model(model.encoder_decoder)
         
         if config.diffusion_frozen:
-            self._freeze_model(model.model)
+            # self._freeze_model(model.model)
             self._freeze_model(model.diffusion)
             
         return model
@@ -112,10 +114,29 @@ class PairEncoderModel(PreTrainedModel):
             self.left_model if config.anchor_encoder_shared else self._anchor_encoder(config)
         )
         self.context_model = self._context_encoder(config)
+        self.use_hic = self.config.hic
         self.use_context_mask = self.config.hicdiffusion_mask
         self.use_context_features = self.context_model is not None
         self.use_anchor_features = self.left_model is not None
-        self.context_reduce = nn.Sequential(
+        self.context_reduce = None
+        
+        if config.hicdiffusion_cnn == 'residuals':
+            self.context_reduce = self._make_residuals(config)
+        elif config.hicdiffusion_cnn == '3d':
+            self.context_reduce = HiCnMaskEncoder3D() # expects only use_context_features and hicdiffusion_mask
+        else:
+            raise ValueError
+        
+        self.final = nn.Sequential(
+            nn.Linear(
+                in_features=config.hidden_size * (2 * self.use_anchor_features + (self.use_context_features or self.config.hic)), 
+                out_features=config.hidden_size
+            ),
+            nn.ReLU()
+        )
+
+    def _make_residuals(self, config):
+        return nn.Sequential(
             ResidualConv2d(
                 (HICDIFFUSION_OUTPUT_CHANNELS * self.config.hicdiffusion_y_cond * self.use_context_features)
                 + self.use_context_features # y_pred
@@ -135,13 +156,6 @@ class PairEncoderModel(PreTrainedModel):
             nn.Linear(HICDIFFUSION_OUTPUT_SIZE * HICDIFFUSION_OUTPUT_SIZE, config.hidden_size),
             nn.ReLU(),
         )
-        self.final = nn.Sequential(
-            nn.Linear(
-                in_features=config.hidden_size * (2 * self.use_anchor_features + (self.use_context_features or self.config.hic)), 
-                out_features=config.hidden_size
-            ),
-            nn.ReLU()
-        )
 
     def forward(
         self, 
@@ -152,37 +166,45 @@ class PairEncoderModel(PreTrainedModel):
         hic: _Tensor['batch', 'w', 'h'] | None = None,
         left_attention_mask: _Tensor['batch', 'sequence'] | None = None,
         right_attention_mask: _Tensor['batch', 'sequence'] | None = None,
+        context_image: _Tensor['batch', 'channels', 'w', 'h'] | None = None,
+        context_image_mask: _Tensor['batch', 'w', 'h'] | None = None,
+        return_context_image: bool = False,
     ):
         features = []
-        # if self.use_anchor_features:
-        left_hidden = self.left_model(
-            input_ids=left_sequence,
-            attention_mask=left_attention_mask,
-        )
-        right_hidden = self.right_model(
-            input_ids=right_sequence,
-            attention_mask=right_attention_mask,
-        )
-        features.extend([left_hidden, right_hidden])
-        
-        context = []
-        if self.use_context_features:
-            y_cond, y_pred = self.context_model(context_sequence)
-            if self.config.hicdiffusion_y_cond:
-                context.append(y_cond)
-            context.append(y_pred)
-        
-        if hic is not None:
-            context.append(hic)
-        
-        if self.use_context_mask:
-            context.append(context_mask)
+        if self.use_anchor_features:
+            left_hidden = self.left_model(
+                input_ids=left_sequence,
+                attention_mask=left_attention_mask,
+            )
+            right_hidden = self.right_model(
+                input_ids=right_sequence,
+                attention_mask=right_attention_mask,
+            )
+            features.extend([left_hidden, right_hidden])
 
-        context = torch.cat(context, dim=1)
-        features.append(self.context_reduce(context))
+        if context_image is None:
+            context_channels = []
+            
+            if self.use_context_features:
+                y_cond, y_pred = self.context_model(context_sequence)
+                if self.config.hicdiffusion_y_cond:
+                    context_channels.append(y_cond)
+                context_channels.append(y_pred)
+            if self.use_hic:
+                context_channels.append(hic)
+            if self.use_context_mask:
+                context_channels.append(context_mask)
+            
+            context_image = torch.cat(context_channels, dim=1)
+
+        if context_image_mask is not None:
+            context_image = context_image * context_image_mask
         
+        features.append(self.context_reduce(context_image))
         x = torch.cat(features, dim=1)
         x = self.final(x)
+        if return_context_image:
+            return x, context_image
         return x
 
 
@@ -204,8 +226,11 @@ class PairEncoderForClassification(PreTrainedModel):
         labels: _Tensor['batch', 'label'] | None = None,
         left_attention_mask: _Tensor['batch', 'sequence'] | None = None,
         right_attention_mask: _Tensor['batch', 'sequence'] | None = None,
+        context_image: _Tensor['batch', 'channels', 'w', 'h'] | None = None,
+        context_image_mask: _Tensor['batch', 'w', 'h'] | None = None,
+        return_context_image: bool = False,
     ):
-        x = self.encoder(
+        x = encoded = self.encoder(
             left_sequence=left_sequence,
             right_sequence=right_sequence,
             left_attention_mask=left_attention_mask,
@@ -213,13 +238,22 @@ class PairEncoderForClassification(PreTrainedModel):
             context_sequence=context_sequence,
             context_mask=context_mask,
             hic=hic,
+            context_image=context_image,
+            context_image_mask=context_image_mask,
+            return_context_image=return_context_image,
         )
+        if return_context_image:
+            x = encoded[0]
+            context_image = encoded[1]
+        
         x = self.dropout(x)
         logits = self.classifier(x)
+
+        include_image = (context_image,) if return_context_image else tuple()
         
         if labels is None:
-            return (logits, )
+            return (logits,) + include_image
         
         loss_fct = nn.BCEWithLogitsLoss()
         loss = loss_fct(logits, labels)
-        return (loss, logits)
+        return (loss, logits) + include_image
