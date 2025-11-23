@@ -5,16 +5,29 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 import wandb
+from Bio import SeqIO
 from fire import Fire
-from wandb.sdk.wandb_run import Run
+from transformers import AutoTokenizer
 from dataclasses_json import dataclass_json
+from wandb.sdk.wandb_run import Run
 
 from hicdifflib.data.base import Artifact, LocalArtifact, WandbArtifact, JobType, BasePipeline
 from hicdifflib.data.base import wandb_run, simple_exec_and_log
-from hicdifflib.data.petutils import generate_pet_pairs
+from hicdifflib.data.petutils import generate_pet_pairs, check_pair_sequences
 from hicdifflib.hicdiffusion import HICDIFFUSION_WINDOW_SIZE
-from hicdifflib.utils import read_paired_ends
+from hicdifflib.utils import read_paired_ends, bstr
 
+CHROM_SETS = {
+    'test': ['chr14'],
+    'eval': ['chr15'],
+}
+CHROM_SETS['train'] = [
+    f'chr{i}' 
+    for i in range(1, 23) 
+    if f'chr{i}' not in (CHROM_SETS['test']+CHROM_SETS['eval'])
+]
+
+logger = logging.getLogger(__name__)
 
 @dataclass_json
 @dataclass
@@ -23,6 +36,7 @@ class DataConfig:
         default_factory=lambda: [f'chr{i+1}' for i in range(22)]
         # "$(seq -f 'chr%g' 1 22)"
     )
+    chroms_set: str | None = None
     data_root: str = './data'
     skip_cache: bool = True # some files are too large for keeping 
                             # them in data_root and WANDB_CACHE_DIR
@@ -35,9 +49,76 @@ class DataConfig:
 
     def __post_init__(self):
         self._api = wandb.Api(overrides={'project': self.wandb_project})
-
+        if self.chroms_set is not None:
+            self.chroms = CHROM_SETS[self.chroms_set]
 
 class DataPipeline(DataConfig):
+    
+    @wandb_run(job_type=JobType.DATA_GENERATION)
+    def filter_pairs(
+        self,
+        run: Run | None,
+        pet_pairs: str | Artifact,
+        sequence: str | Artifact,
+        reference: str | Artifact = 'GRCh38-reference-genome:v0',
+        tokenizer_name: str = 'm10an/DNABERT-S',
+        min_chrom_length_match: float = 0.95,
+        max_anchor_tokens: int = 510,
+        name: str = 'filtered',
+    ):
+        if self.wandb:
+            run.config.update({
+                'min_chrom_length_match': min_chrom_length_match,
+                'max_anchor_tokens': max_anchor_tokens,
+                'tokenizer_name': tokenizer_name,
+            })
+            run.name = 'filter_pairs_' + name
+        pet_pairs = self._get_artifact(pet_pairs, run)
+        sequence = self._get_artifact(sequence, run)
+        reference = self._get_artifact(reference, run)
+        
+        reference_seq = {}
+        with open(reference.path) as f:
+            records = SeqIO.parse(f, 'fasta')
+            for record in records:
+                if record.id not in self.chroms:
+                    continue
+                reference_seq[record.id] = record.seq
+                logger.info("Loaded '%s' from reference (%s)", record.id, bstr(len(record.seq)))
+        
+        if reference == sequence:
+            seq = reference_seq
+        else:
+            seq = {}
+            with open(sequence.path) as f:
+                records = SeqIO.parse(f, 'fasta')
+                for record in records:
+                    if record.id not in self.chroms:
+                        continue
+                    ref_len = len(reference_seq[record.id])
+                    rec_len = len(record)
+                    ratio = min(ref_len / rec_len, rec_len / ref_len)
+                    if ratio < min_chrom_length_match:
+                        logger.info(
+                            "Skipping '%s' (%s), (%d%% match with reference)",
+                            record.id, bstr(len(record.seq)), round(100*ratio)
+                        )
+                        continue
+                    seq[record.id] = record.seq
+                    logger.info("Loaded '%s' (%s)", record.id, bstr(len(record.seq)))
+
+        df = check_pair_sequences(
+            pet_pairs=pd.read_csv(pet_pairs.path),
+            chrom_sequences=seq,
+            tokenizer=AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True),
+            max_anchor_tokens=max_anchor_tokens,
+            progress_bar=False,
+        )
+        
+        path = Path(self.data_root) / f'{name}_pairs.csv'
+        df.to_csv(path, index=False)
+        self._log_artifact(run, path)
+    
     @wandb_run(job_type=JobType.DATA_GENERATION)
     def pet_pairs(
         self,

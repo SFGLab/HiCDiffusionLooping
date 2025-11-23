@@ -1,5 +1,5 @@
 function pipeline(){
-  python hicdifflib/data.py --data_root $SINGULARITY_BIND $@
+  python hicdifflib/data/pipeline.py --data_root $SINGULARITY_BIND $@
 }
 
 function to_list(){
@@ -53,4 +53,61 @@ pipeline pet_pairs \
     --pairs $(to_list "$pairs") \
     --peaks $(to_list "$peaks") \
     --motifs $(to_list "$motifs") \
+    --name gm12878 \
+    || exit
+
+
+##################### FILTER PAIRS #############################################
+
+pipeline --chroms_set "train" filter_pairs \
+    --pet_pairs gm12878_pairs.csv:latest \
+    --sequence GRCh38-reference-genome:v0 \
+    --max_anchor_tokens 510 \
+    --name train_hg38_gm12878 \
+    || exit
+
+pipeline --chroms_set "train" filter_pairs \
+    --pet_pairs gm12878_pairs.csv:latest \
+    --sequence 4DNFI1GNQM8L.delly.vcf.fa:v0 \
+    --min_chrom_length_match 0.2 \
+    --max_anchor_tokens 510 \
+    --name train_4DNFI1GNQM8L_gm12878 \
+    || exit
+
+pipeline --chroms_set "train" filter_pairs \
+    --pet_pairs gm12878_pairs.csv:latest \
+    --sequence 4DNFI2OEE66L.delly.vcf.fa:v0 \
+    --min_chrom_length_match 0.2 \
+    --max_anchor_tokens 510 \
+    --name train_4DNFI2OEE66L_gm12878 \
+    || exit
+
+pipeline --chroms_set "eval" filter_pairs \
+    --pet_pairs gm12878_pairs.csv:latest \
+    --sequence GRCh38-reference-genome:v0 \
+    --max_anchor_tokens 510 \
+    --name eval_hg38_gm12878 \
+    || exit
+
+pipeline --chroms_set "eval" filter_pairs \
+    --pet_pairs gm12878_pairs.csv:latest \
+    --sequence 4DNFI1GNQM8L.delly.vcf.fa:v0 \
+    --min_chrom_length_match 0.95 \
+    --max_anchor_tokens 510 \
+    --name eval_4DNFI1GNQM8L_gm12878 \
+    || exit
+
+pipeline --chroms_set "eval" filter_pairs \
+    --pet_pairs gm12878_pairs.csv:latest \
+    --sequence 4DNFI2OEE66L.delly.vcf.fa:v0 \
+    --min_chrom_length_match 0.95 \
+    --max_anchor_tokens 510 \
+    --name eval_4DNFI2OEE66L_gm12878  \
+    || exit
+
+pipeline --chroms_set "test" filter_pairs \
+    --pet_pairs gm12878_pairs.csv:latest \
+    --sequence GRCh38-reference-genome:v0 \
+    --max_anchor_tokens 510 \
+    --name test_hg38_gm12878  \
     || exit

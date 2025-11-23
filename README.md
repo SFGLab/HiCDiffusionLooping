@@ -2,7 +2,7 @@
 HiCDiffusion based models for prediction of chromatin loops in human genome
 
 ```shell
-conda env create -n hicdiffusion python=3.11
+conda create -n hicdiffusion python=3.11
 conda activate hicdiffusion
 pip install -r requirements.txt
 pip install -e .

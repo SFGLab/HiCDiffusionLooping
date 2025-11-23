@@ -2,14 +2,68 @@ import logging
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 from pyranges import PyRanges
+from transformers import PreTrainedTokenizer
+from Bio.SeqRecord import SeqRecord
 from sklearn.neighbors import NearestNeighbors
 
 from hicdifflib.data.base import log_text
+from hicdifflib.hicdiffusion import HICDIFFUSION_WINDOW_SIZE
 
 logger = logging.getLogger(__name__)
 
 _to_pyrange_columns = {'chr': 'Chromosome', 'start': 'Start', 'end': 'End', 'strand': 'Strand'}
+
+
+
+def check_pair_sequences(
+    pet_pairs: pd.DataFrame, 
+    chrom_sequences: dict[str, SeqRecord],
+    tokenizer: PreTrainedTokenizer,
+    max_anchor_tokens: int = 512,
+    progress_bar: bool = True,
+) -> pd.DataFrame:
+    result = []
+    for pair_idx in tqdm(pet_pairs.index, disable=not progress_bar):
+        row = pet_pairs.loc[pair_idx].copy()
+        seq = chrom_sequences.get(row.chr)
+        if seq is None:
+            continue
+        
+        # check if any index is higher than a sequence
+        if any(x >= len(seq) for x in [row.start_l, row.end_l - 1, row.start_r, row.end_r - 1]):
+            continue
+
+        if any(
+            len(tokenizer.tokenize(str(seq[anchor]))) > max_anchor_tokens
+            for anchor in [slice(row.start_l, row.end_l), slice(row.start_r, row.end_r)]
+        ):
+            continue
+
+        # bound possible range of window positions which includes both anchors
+        min_context_start = max(row.end_r - HICDIFFUSION_WINDOW_SIZE, 0)
+        max_context_end = min(
+            row.start_l + HICDIFFUSION_WINDOW_SIZE, 
+            len(seq), 
+            # *([] if self._cooler is None else [self._cooler.chromsizes[row.chr]])
+        )
+        if (
+            min_context_start > row.start_l or
+            max_context_end < row.end_r or
+            max_context_end - min_context_start < HICDIFFUSION_WINDOW_SIZE
+        ):
+            continue
+        
+        row['min_context_start'] = min_context_start
+        row['max_context_start'] = max_context_end - HICDIFFUSION_WINDOW_SIZE
+        result.append(row.to_frame().T)
+
+    if not result:
+        return pd.DataFrame(
+            columns=pet_pairs.columns.tolist() + ['min_context_start', 'max_context_start']
+        )
+    return pd.concat(result, ignore_index=True)
 
 
 def generate_pet_pairs(
