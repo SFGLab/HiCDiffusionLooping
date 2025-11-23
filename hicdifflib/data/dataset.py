@@ -134,41 +134,6 @@ class PairedEndsDataset(Dataset):
             for x in self._valid_sequences
         ]
 
-    def _check_pair_sequences(self, pair_idx: int) -> list[dict]:
-        row = self._pairs_df.loc[pair_idx]
-        result = []
-        for seq_idx, seq in enumerate(self._sequences[row.chr]):
-            # check if any index is higher than a sequence
-            if any(x >= len(seq) for x in [row.start_l, row.end_l - 1, row.start_r, row.end_r - 1]):
-                continue
-
-            if self._tokenizer and any(
-                len(self._tokenizer.tokenize(str(seq[anchor]))) > self.max_anchor_length
-                for anchor in [slice(row.start_l, row.end_l), slice(row.start_r, row.end_r)]
-            ):
-                continue
-
-            # bound possible range of window positions which includes both anchors
-            min_context_start = max(row.end_r - HICDIFFUSION_WINDOW_SIZE, 0)
-            max_context_end = min(
-                row.start_l + HICDIFFUSION_WINDOW_SIZE, 
-                len(seq), 
-                *([] if self._cooler is None else [self._cooler.chromsizes[row.chr]])
-            )
-            if (
-                min_context_start > row.start_l or
-                max_context_end < row.end_r or
-                max_context_end - min_context_start < HICDIFFUSION_WINDOW_SIZE
-            ):
-                continue
-            result.append({
-                'pair_idx': pair_idx,
-                'seq_idx': seq_idx,
-                'min_context_start': min_context_start,
-                'max_context_start': max_context_end - HICDIFFUSION_WINDOW_SIZE
-            })
-        return result
-
     def _context_from(self, max_offset: int, context_offset: float | None = None) -> int:
         if context_offset is not None:
             return floor(max_offset * context_offset)

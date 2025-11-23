@@ -17,8 +17,8 @@ from safetensors.torch import load_file
 from hicdifflib.data.base import DataConfig, WandbArtifact
 from hicdifflib.data.collator import PairedEndsCollatorWithPadding
 from hicdifflib.data.dataset import PairedEndsDataset, ConcatPairedEndsDataset
-from hicdifflib.v2 import PairEncoderConfig2 as PairEncoderConfig
-from hicdifflib.v2 import PairEncoderForClassification
+from hicdifflib.dnabert import PairEncoderConfig2 as PairEncoderConfig
+from hicdifflib.dnabert import PairEncoderForClassification
 from hicdifflib.metrics import compute_metrics
 from hicdifflib.trainer import BalancedTrainer
 

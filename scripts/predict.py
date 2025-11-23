@@ -17,7 +17,7 @@ from transformers import TrainingArguments
 from hicdifflib.data.base import DataConfig, WandbArtifact
 from hicdifflib.data.collator import PairedEndsCollatorWithPadding
 from hicdifflib.data.dataset import PairedEndsDataset
-from hicdifflib.v2 import PairEncoderConfig2 as PairEncoderConfig, PairEncoderForClassification
+from hicdifflib.dnabert import PairEncoderConfig2 as PairEncoderConfig, PairEncoderForClassification
 from hicdifflib.metrics import compute_metrics
 from hicdifflib.trainer import BalancedTrainer
 

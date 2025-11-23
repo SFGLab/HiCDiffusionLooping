@@ -39,6 +39,9 @@ class JobType:
 class Artifact:
     def __str__(self) -> str:
         ...
+    
+    def __eq__(self, value):
+        return str(self) == str(value)
 
     @property
     def path(self) -> Path:

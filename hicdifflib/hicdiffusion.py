@@ -5,8 +5,8 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 
 from hicdifflib.utils import bp
-from HiCDiffusion.hicdiffusion_encoder_decoder_model import HiCDiffusionEncoderDecoder
-from HiCDiffusion.denoise_model import UnetConditional, GaussianDiffusionConditional
+from hicdifflib.denoise import UnetConditional, GaussianDiffusionConditional
+from hicdifflib.encoder_decoder import HiCDiffusionEncoderDecoder
 
 
 HICDIFFUSION_WINDOW_BP = bp(2_097_152)
