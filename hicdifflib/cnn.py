@@ -1,5 +1,12 @@
 import torch.nn as nn
 
+
+class Flatten(nn.Module):
+    def forward(self, x):
+        x = x.view(x.size(0), -1) 
+        return x
+
+
 class ConvBlock3D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=(2, 3, 3),
                  stride=(2, 2, 2), padding=(0, 1, 1)):
@@ -7,7 +14,7 @@ class ConvBlock3D(nn.Module):
         self.conv = nn.Conv3d(in_channels, out_channels, kernel_size=kernel_size,
                               stride=stride, padding=padding)
         self.bn = nn.BatchNorm3d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU(inplace=False)
 
         self.skip = nn.Sequential(
             nn.Conv3d(in_channels, out_channels, kernel_size=1, stride=stride),
@@ -19,7 +26,7 @@ class ConvBlock3D(nn.Module):
         out = self.conv(x)
         out = self.bn(out)
 
-        out += identity
+        out = out + identity
         out = self.relu(out)
         return out
 
@@ -31,7 +38,7 @@ class ConvBlock2D(nn.Module):
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size,
                               stride=stride, padding=padding)
         self.bn = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU(inplace=False)
 
         self.skip = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride),
@@ -42,7 +49,7 @@ class ConvBlock2D(nn.Module):
         out = self.conv(x)
         out = self.bn(out)
 
-        out += identity
+        out = out + identity
         out = self.relu(out)
         return out
 
@@ -86,7 +93,7 @@ class HiCnMaskEncoder3D(nn.Module):
         self.final = nn.Sequential(
             nn.Conv2d(1024, 2048, kernel_size=3, stride=2, padding=1),
             nn.ReLU(),
-            nn.Flatten(),
+            Flatten(),
             nn.Dropout(0.1),
             nn.Linear(2048, 768),
             nn.ReLU(),
