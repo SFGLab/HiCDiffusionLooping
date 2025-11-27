@@ -11,21 +11,13 @@ from transformers import AutoTokenizer
 from dataclasses_json import dataclass_json
 from wandb.sdk.wandb_run import Run
 
-from hicdifflib.data.base import Artifact, LocalArtifact, WandbArtifact, JobType, BasePipeline
+from hicdifflib.data import CHROM_SETS
+from hicdifflib.data.base import Artifact, LocalArtifact, WandbArtifact, JobType
 from hicdifflib.data.base import wandb_run, simple_exec_and_log
 from hicdifflib.data.petutils import generate_pet_pairs, check_pair_sequences
 from hicdifflib.hicdiffusion import HICDIFFUSION_WINDOW_SIZE
 from hicdifflib.utils import read_paired_ends, bstr
 
-CHROM_SETS = {
-    'test': ['chr14'],
-    'eval': ['chr15'],
-}
-CHROM_SETS['train'] = [
-    f'chr{i}' 
-    for i in range(1, 23) 
-    if f'chr{i}' not in (CHROM_SETS['test']+CHROM_SETS['eval'])
-]
 
 logger = logging.getLogger(__name__)
 

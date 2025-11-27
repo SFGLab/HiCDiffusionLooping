@@ -124,24 +124,6 @@ def wandb_run(**wandb_kwargs):
     return decorate_run
 
 
-class BasePipeline(DataConfig):
-    def _log_artifact(self, run: Run, path: Path):
-        if self.wandb:
-            result = wandb.Artifact(
-                name=path.name,
-                type="dataset",
-            )
-            result.add_file(str(path))
-            run.log_artifact(result)
-
-    def _get_artifact(self, artifact: str | Artifact, run: Run | None = None) -> Artifact:
-        if isinstance(artifact, Artifact):
-            return artifact
-        if isinstance(artifact, Path) or ':' not in str(artifact):
-            return LocalArtifact(artifact)
-        return WandbArtifact(artifact, self, run)
-
-
 def log_text(logg_fn, text):
     for line in text.split('\n'):
         line = line.strip()
