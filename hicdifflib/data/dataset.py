@@ -77,6 +77,11 @@ class PairedEndsDataset(Dataset):
         if pairs_df is not None:
             self._pairs_df = pairs_df
             self._valid_sequences = valid_sequences
+            if not valid_sequences:
+                self._valid_sequences = []
+                for pair_idx in tqdm(self._pairs_df.index, disable=not self.progress_bar, ):
+                    self._valid_sequences += self._check_pair_sequences(pair_idx)
+                self._logger.info("%d valid sequences", len(self._valid_sequences))
             return
         
         self._pairs_df = (
