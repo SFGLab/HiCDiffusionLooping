@@ -79,6 +79,7 @@ def generate_pet_pairs(
     knn_radius: float = 10_000, 
     knn_metric: str = 'euclidean',
     knn_distance_to_drop: float | None = None,
+    count_columns: str = 'pet_counts',
     # knn_distance_to_positive: float | None = None,
 ):
 
@@ -215,17 +216,17 @@ def generate_pet_pairs(
         neg_mask = ~negatives_df.index.isin(np.unique(indices.flatten()[distances.flatten() <= knn_distance_to_drop]))
     
     negatives_df = negatives_df[neg_mask].reset_index(drop=True)
-    negatives_df['pet_counts'] = 0
+    negatives_df[count_columns] = 0
     logger.info('After removal of overlapped generated and positive pairs: negative pairs %d', len(negatives_df))
 
     dataset_df = pd.concat([
-        positives_df[['chr_l', 'start_l', 'end_l', 'start_r', 'end_r', 'pet_counts', 'peak_value_l', 'peak_value_r']]
+        positives_df[['chr_l', 'start_l', 'end_l', 'start_r', 'end_r', count_columns, 'peak_value_l', 'peak_value_r']]
         .rename(
-            columns={'chr_l': 'chr'}
+            columns={'chr_l': 'chr', count_columns: 'counts'}
         ),
-        negatives_df[['Chromosome', 'Start', 'End', 'Start_r', 'End_r', 'pet_counts', 'peak_value', 'peak_value_r']]
+        negatives_df[['Chromosome', 'Start', 'End', 'Start_r', 'End_r', count_columns, 'peak_value', 'peak_value_r']]
         .rename(
-            columns={'Chromosome': 'chr', 'Start': 'start_l', 'End': 'end_l', 'Start_r': 'start_r', 'End_r': 'end_r', 'peak_value': 'peak_value_l'}
+            columns={'Chromosome': 'chr', 'Start': 'start_l', 'End': 'end_l', 'Start_r': 'start_r', 'End_r': 'end_r', 'peak_value': 'peak_value_l', count_columns: 'counts'}
         )
     ])
     return dataset_df
