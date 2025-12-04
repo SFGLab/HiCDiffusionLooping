@@ -220,8 +220,7 @@ class DataPipeline(DataConfig):
         motif = self._get_artifact(motif, run)
         sequence = self._get_artifact(sequence, run)
         filename = 'fimo_' + motif.path_no_suffix.name + '_' + sequence.path_no_suffix.name + '.tsv.gz'
-        subdir = sequence.path.relative_to(self.data_root).parent
-        output = Path(self.data_root) / subdir / filename
+        output = Path(self.data_root) / filename
         self._exec_fimo(sequence, motif, output)
         self._log_artifact(run, output)
 
