@@ -120,10 +120,10 @@ class DataPipeline(DataConfig):
         peaks: list[str | Artifact],
         motifs: list[str | Artifact],
         pairs_counts_column: str = 'pet_counts',
+        pairs_extra_columns: Optional[list[str]] = None,
+        pairs_header: bool = False,
         peak_score_idx: int = 6,
         peak_strand_slack: int = 0,
-        peaks_extra_columns: Optional[list[str]] = None,
-        peaks_header: bool = False,
         min_strand_ratio: float = 0.5,
         anchor_peak_slack: int = 0,
         anchor_peak_min_overlap: int = 500,
@@ -133,7 +133,7 @@ class DataPipeline(DataConfig):
         knn_distance_to_drop: float | None = None,
         name: str = 'pet',
     ):
-        peaks_extra_columns = peaks_extra_columns or ['pet_counts']
+        pairs_extra_columns = pairs_extra_columns or ['pet_counts']
         
         if self.wandb:
             run.config.update({
@@ -156,7 +156,7 @@ class DataPipeline(DataConfig):
 
         pairs_df = (
             pd.concat([
-                read_paired_ends(artifact.path, extra_columns=peaks_extra_columns, header=peaks_header)
+                read_paired_ends(artifact.path, extra_columns=pairs_extra_columns, header=pairs_header)
                 for artifact in pairs
             ])
             .query('len_full <= @HICDIFFUSION_WINDOW_SIZE')
@@ -220,8 +220,7 @@ class DataPipeline(DataConfig):
         motif = self._get_artifact(motif, run)
         sequence = self._get_artifact(sequence, run)
         filename = 'fimo_' + motif.path_no_suffix.name + '_' + sequence.path_no_suffix.name + '.tsv.gz'
-        subdir = sequence.path.relative_to(self.data_root).parent
-        output = Path(self.data_root) / subdir / filename
+        output = Path(self.data_root) / filename
         self._exec_fimo(sequence, motif, output)
         self._log_artifact(run, output)
 
