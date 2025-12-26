@@ -54,7 +54,7 @@ class DataPipeline(DataConfig):
         pet_pairs: str | Artifact,
         sequence: str | Artifact,
         reference: str | Artifact = 'GRCh38-reference-genome:v0',
-        tokenizer_name: str = 'm10an/DNABERT-S',
+        tokenizer_name: str | None = 'm10an/DNABERT-S',
         min_chrom_length_match: float = 0.95,
         max_anchor_tokens: int = 510,
         name: str = 'filtered',
@@ -103,7 +103,7 @@ class DataPipeline(DataConfig):
         df = check_pair_sequences(
             pet_pairs=pd.read_csv(pet_pairs.path),
             chrom_sequences=seq,
-            tokenizer=AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True),
+            tokenizer=AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True) if tokenizer_name else None,
             max_anchor_tokens=max_anchor_tokens,
             progress_bar=False,
         )
@@ -131,6 +131,7 @@ class DataPipeline(DataConfig):
         knn_radius: float = 10_000, 
         knn_metric: str = 'euclidean',
         knn_distance_to_drop: float | None = None,
+        strict_anchors: bool = True,
         name: str = 'pet',
     ):
         pairs_extra_columns = pairs_extra_columns or ['pet_counts']
@@ -141,6 +142,7 @@ class DataPipeline(DataConfig):
                 'min_strand_ratio': min_strand_ratio,
                 'anchor_peak_slack': anchor_peak_slack,
                 'anchor_peak_min_overlap': anchor_peak_min_overlap,
+                'strict_anchors': strict_anchors,
             })
             if knn_distance_to_drop is not None:
                 run.config.update({
@@ -169,7 +171,6 @@ class DataPipeline(DataConfig):
                 artifact.path,
                 sep='\t',
                 header=None,
-                # names=['chr', 'start', 'end', 'c1', 'c2', 'c3', 'value', 'c4', 'c5']
             )
             for artifact in peaks
         ])
@@ -206,6 +207,7 @@ class DataPipeline(DataConfig):
                 knn_metric=knn_metric,
                 knn_radius=knn_radius,
                 knn_algorithm=knn_algorithm,
+                strict_anchors=strict_anchors,
             )
 
         path = Path(self.data_root) / f'{name}_pairs.csv'

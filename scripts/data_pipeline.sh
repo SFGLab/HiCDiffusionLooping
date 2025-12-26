@@ -1,3 +1,6 @@
+echo ${SINGULARITY_BIND?}
+echo ${TRIOS_ROOT?}
+
 function pipeline(){
   python hicdifflib/data/pipeline.py --data_root $SINGULARITY_BIND $@
 }
@@ -62,52 +65,52 @@ pipeline pet_pairs \
 pipeline --chroms_set "train" filter_pairs \
     --pet_pairs gm12878_pairs.csv:latest \
     --sequence GRCh38-reference-genome:v0 \
-    --max_anchor_tokens 510 \
-    --name train_hg38_gm12878 \
+    --tokenizer_name None \
+    --name train_gm12878_hg38 \
     || exit
 
 pipeline --chroms_set "train" filter_pairs \
     --pet_pairs gm12878_pairs.csv:latest \
     --sequence 4DNFI1GNQM8L.delly.vcf.fa:v0 \
     --min_chrom_length_match 0.2 \
-    --max_anchor_tokens 510 \
-    --name train_4DNFI1GNQM8L_gm12878 \
+    --tokenizer_name None \
+    --name train_gm12878_4DNFI1GNQM8L \
     || exit
 
 pipeline --chroms_set "train" filter_pairs \
     --pet_pairs gm12878_pairs.csv:latest \
     --sequence 4DNFI2OEE66L.delly.vcf.fa:v0 \
     --min_chrom_length_match 0.2 \
-    --max_anchor_tokens 510 \
-    --name train_4DNFI2OEE66L_gm12878 \
+    --tokenizer_name None \
+    --name train_gm12878_4DNFI2OEE66L \
     || exit
 
 pipeline --chroms_set "eval" filter_pairs \
     --pet_pairs gm12878_pairs.csv:latest \
     --sequence GRCh38-reference-genome:v0 \
-    --max_anchor_tokens 510 \
-    --name eval_hg38_gm12878 \
+    --tokenizer_name None \
+    --name eval_gm12878_hg38 \
     || exit
 
 pipeline --chroms_set "eval" filter_pairs \
     --pet_pairs gm12878_pairs.csv:latest \
     --sequence 4DNFI1GNQM8L.delly.vcf.fa:v0 \
     --min_chrom_length_match 0.95 \
-    --max_anchor_tokens 510 \
-    --name eval_4DNFI1GNQM8L_gm12878 \
+    --tokenizer_name None \
+    --name eval_gm12878_4DNFI1GNQM8L \
     || exit
 
 pipeline --chroms_set "eval" filter_pairs \
     --pet_pairs gm12878_pairs.csv:latest \
     --sequence 4DNFI2OEE66L.delly.vcf.fa:v0 \
     --min_chrom_length_match 0.95 \
-    --max_anchor_tokens 510 \
-    --name eval_4DNFI2OEE66L_gm12878  \
+    --tokenizer_name None \
+    --name eval_gm12878_4DNFI2OEE66L  \
     || exit
 
 pipeline --chroms_set "test" filter_pairs \
     --pet_pairs gm12878_pairs.csv:latest \
     --sequence GRCh38-reference-genome:v0 \
-    --max_anchor_tokens 510 \
-    --name test_hg38_gm12878  \
+    --tokenizer_name None \
+    --name test_gm12878_hg38  \
     || exit

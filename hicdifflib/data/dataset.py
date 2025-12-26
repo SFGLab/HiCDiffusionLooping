@@ -27,13 +27,126 @@ class ConcatPairedEndsDataset(ConcatDataset):
     def __init__(self, datasets: list[Dataset]):
         super().__init__(datasets)
         self._datasets = datasets
+        self._labels = []
+        for ds in self._datasets:
+            self.labels.append(ds.get_labels())
 
     def get_labels(self) -> list[int]:
-        return [
-            int(ds._pairs_df.loc[x['pair_idx'], 'label'])
-            for ds in self._datasets
-            for x in ds._valid_sequences
-        ]
+        return self._labels
+
+
+def load_sequences(seq_path: Path, chroms: list[str]) -> dict:
+    result = {}
+    with open(seq_path) as f:
+        records = SeqIO.parse(f, 'fasta')
+        for record in records:
+            if record.id not in chroms:
+                continue
+            result[record.id] = record.seq
+    return result
+
+
+class FilteredPairedEndsDataset(Dataset):
+    def __init__(
+        self,
+        pairs_df: pd.DataFrame,
+        sequence: Path | dict,
+        hic: Path | None = None,
+        hic_resolution: int = 10_000,
+        mask_size: int = HICDIFFUSION_OUTPUT_SIZE,
+        tokenizer: PreTrainedTokenizer | None = None,
+        center_context: bool = False,
+        center_position: float = 0.5,
+        progress_bar: bool = True,
+    ) -> None:
+        self.mask_size = mask_size
+        self.center_context = center_context
+        self.center_position = center_position
+        self._tokenizer = tokenizer
+        self._cooler = None if hic is None else Cooler(f"{hic}::/resolutions/{hic_resolution}")
+        self._logger = logging.getLogger(self.__class__.__name__)
+        self._sequence = sequence if isinstance(sequence, dict) else load_sequences(sequence, chroms)
+        self._pairs_df = self.pairs_df
+
+    def __len__(self):
+        return len(self._pairs_df)
+
+    def __getitem__(self, i: int) -> dict:
+        try:
+            inputs = self.get_item(i)
+        except Exception as e:
+            print(i)
+            raise e
+        return inputs
+
+    def get_item(
+        self,
+        i: int,
+        context_offset: float | None = None,
+        tokenize: bool = True,
+        return_tensors: str | None = None
+    ) -> dict:
+        inputs = self.get_pair_context(i, context_offset)
+        inputs['left_sequence'] = str(inputs['anchor_l'])
+        inputs['right_sequence'] = str(inputs['anchor_r'])
+        inputs['context_sequence'] = torch.unsqueeze(
+            input=sequence_to_onehot(str(inputs['context'])),
+            dim=0
+        )
+        inputs['context_mask'] = sequences_mask(
+            n=len(inputs['context']),
+            start_l=inputs['anchor_slice_l'].start,
+            end_l=inputs['anchor_slice_l'].stop,
+            start_r=inputs['anchor_slice_r'].start,
+            end_r=inputs['anchor_slice_r'].stop,
+            size=self.mask_size
+        )
+
+        if inputs['hic'] is not None:
+            inputs['hic'] = torch.unsqueeze(torch.unsqueeze(torch.tensor(inputs['hic'], dtype=torch.float32), 0), 0)
+        return inputs
+
+    def get_labels(self) -> list[int]:
+        return self._pairs_df.label.tolist()
+
+    def _context_from(self, max_offset: int, context_offset: float | None = None) -> int:
+        if context_offset is not None:
+            return floor(max_offset * context_offset)
+        if self.center_context:
+            return floor(max_offset * self.center_position)
+        return random.randint(0, max_offset)
+
+    def get_pair_context(self, i: int, context_offset: float | None = None) -> dict:
+        row = self._pairs_df.loc[i]
+
+        context_from = self._context_from(
+            max_offset=row['max_context_start'] - row['min_context_start'],
+            context_offset=context_offset
+        )
+        context_start = row['min_context_start'] + context_from
+        context_end = context_start + HICDIFFUSION_WINDOW_SIZE
+        seq = self._sequence[row['chr']]
+
+        data = dict(
+            sample_idx=i,
+            chr=row.chr,
+            context_slice=slice(context_start, context_end),
+            anchor_slice_l=slice(row.start_l - context_start, row.end_l - context_start),
+            anchor_slice_r=slice(row.start_r - context_start, row.end_r - context_start),
+            label=float(row.label),
+        )
+        data['context'] = seq[data['context_slice']]
+        data['anchor_l'] = data['context'][data['anchor_slice_l']]
+        data['anchor_r'] = data['context'][data['anchor_slice_r']]
+
+        data['hic'] = None
+        if self._cooler is not None:
+            data['hic'] = resize(self.read_hic_matrix(data['chr'], context_start, context_end), HIC_SHAPE)
+        return data
+
+    def read_hic_matrix(self, chr, start, end):
+        m = self._cooler.matrix(field="count", balance=None).fetch(f"{chr}:{start}-{end}")
+        return np.log(m+1)
 
 
 class PairedEndsDataset(Dataset):

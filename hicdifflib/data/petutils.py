@@ -20,7 +20,7 @@ _to_pyrange_columns = {'chr': 'Chromosome', 'start': 'Start', 'end': 'End', 'str
 def check_pair_sequences(
     pet_pairs: pd.DataFrame, 
     chrom_sequences: dict[str, SeqRecord],
-    tokenizer: PreTrainedTokenizer,
+    tokenizer: PreTrainedTokenizer | None = None,
     max_anchor_tokens: int = 512,
     progress_bar: bool = True,
 ) -> pd.DataFrame:
@@ -35,7 +35,7 @@ def check_pair_sequences(
         if any(x >= len(seq) for x in [row.start_l, row.end_l - 1, row.start_r, row.end_r - 1]):
             continue
 
-        if any(
+        if tokenizer and any(
             len(tokenizer.tokenize(str(seq[anchor]))) > max_anchor_tokens
             for anchor in [slice(row.start_l, row.end_l), slice(row.start_r, row.end_r)]
         ):
@@ -80,6 +80,7 @@ def generate_pet_pairs(
     knn_metric: str = 'euclidean',
     knn_distance_to_drop: float | None = None,
     count_columns: str = 'pet_counts',
+    strict_anchors: bool = True,  # whether each achor in pair should both have peaks and motifs joined
     # knn_distance_to_positive: float | None = None,
 ):
 
@@ -173,8 +174,23 @@ def generate_pet_pairs(
     log_text(logger.info, repr(l_pr))
     log_text(logger.info, repr(r_pr))
 
-    anchors_filtered_pr = anchors_pr.join(peaks_stranded_pr, suffix='_peak', report_overlap=True, slack=anchor_peak_slack, strandedness='same', how='right')
-    anchors_filtered_pr = anchors_filtered_pr[anchors_filtered_pr.Overlap >= anchor_peak_min_overlap]
+    anchors_filtered_pr = anchors_pr.join(
+        peaks_stranded_pr, 
+        suffix='_peak', 
+        report_overlap=True, 
+        slack=anchor_peak_slack, 
+        strandedness='same', 
+        how='right' if strict_anchors else 'left'
+    )
+    if strict_anchors:
+        anchors_filtered_pr = anchors_filtered_pr[anchors_filtered_pr.Overlap >= anchor_peak_min_overlap]
+    else:
+        pairs_max_overlap = anchors_filtered_pr.as_df().groupby('pair_index').Overlap.max()
+        anchors_filtered_pr = anchors_filtered_pr[
+            anchors_filtered_pr.pair_index.isin(
+                pairs_max_overlap[pairs_max_overlap > anchor_peak_min_overlap].index
+            )
+        ]
     logger.info('Filtered anchors:')
     log_text(logger.info, repr(anchors_filtered_pr))
 
